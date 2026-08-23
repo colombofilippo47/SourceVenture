@@ -276,7 +276,7 @@ const API_BASE = window.SOURCEVENTURE_API_BASE || "http://localhost:8000";
 const DAILY_CAP = 25;
 const DIRECTORY_THRESHOLD = 20;
 
-let STATE = { me:null, myProjectIds:[] };
+let STATE = { me:null, auth:null };
 
 function $(id){ return document.getElementById(id); }
 function nav(hash){ window.location.hash = hash; }
@@ -332,18 +332,25 @@ function lsGetJSON(key, fallback){
 }
 function lsSetJSON(key, obj){ lsSet(key, JSON.stringify(obj)); }
 
+/* ---- account (real accounts on the Python backend, email + password) ---- */
+function loadAuth(){ STATE.auth = lsGetJSON("auth", null); return STATE.auth; }
+function isLoggedIn(){ return !!(STATE.auth && STATE.auth.token); }
+function authHeaders(){ return isLoggedIn() ? { "Authorization": "Bearer " + STATE.auth.token } : {}; }
+function setAuth(auth){ STATE.auth = auth; lsSetJSON("auth", auth); }
+function clearAuth(){ STATE.auth = null; try{ localStorage.removeItem("auth"); }catch(e){} }
+
 async function ensureMe(){
   var me = lsGetJSON("me", null);
   if(!me){
     me = {
-      visitorId: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : uid("visitor"),
-      founderName:"", founderEmail:"", plan:"free",
+      plan:"free",
       investorName:"", investorEmail:"", investorFirm:"", investorApplied:false,
       createdAt: Date.now()
     };
     lsSetJSON("me", me);
   }
   STATE.me = me;
+  loadAuth();
   return me;
 }
 async function saveMe(patch){
@@ -351,17 +358,72 @@ async function saveMe(patch){
   lsSetJSON("me", STATE.me);
 }
 
-/* ---- projects (shared, served by the Python backend) ---- */
-async function loadMyProjectIds(){ STATE.myProjectIds = lsGetJSON("myProjectIds", []); return STATE.myProjectIds; }
-async function addMyProjectId(id){
-  var ids = await loadMyProjectIds();
-  if(ids.indexOf(id) === -1){ ids.push(id); lsSetJSON("myProjectIds", ids); }
+function openAuthModal(mode){
+  var isSignup = mode === "signup";
+  openModal(
+    '<h3>' + (isSignup ? "Create your account" : "Sign in") + '</h3>' +
+    '<p class="modal-sub">' + (isSignup ? "Free — publish projects and talk to your coach." : "Welcome back.") + '</p>' +
+    '<div class="form-error" id="auth-error"></div>' +
+    (isSignup ? '<div class="field"><label>Name</label><input type="text" id="auth-name" /></div>' : "") +
+    '<div class="field"><label>Email</label><input type="email" id="auth-email" /></div>' +
+    '<div class="field"><label>Password</label><input type="password" id="auth-password" /></div>' +
+    '<div class="modal-actions"><button class="btn btn-primary btn-block" id="auth-submit" onclick="' + (isSignup ? "submitSignup()" : "submitLogin()") + '">' + (isSignup ? "Create account" : "Sign in") + '</button></div>' +
+    '<p class="muted" style="font-size:12px;margin-top:14px;text-align:center;">' + (isSignup ? "Already have an account? " : "New here? ") +
+      '<a href="#" onclick="event.preventDefault();openAuthModal(\'' + (isSignup ? "login" : "signup") + '\');" style="color:var(--primary);">' + (isSignup ? "Sign in" : "Create one") + '</a></p>'
+  );
 }
+async function submitSignup(){
+  var name = $("auth-name").value.trim(), email = $("auth-email").value.trim(), password = $("auth-password").value;
+  var err = $("auth-error");
+  if(!name || !email || !password){ err.textContent = "Fill in every field."; err.classList.add("show"); return; }
+  var btn = $("auth-submit"); btn.disabled = true; btn.textContent = "Creating…";
+  try{
+    var res = await fetch(API_BASE + "/api/auth/signup", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name:name, email:email, password:password }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not create account");
+    setAuth(data);
+    closeModal();
+    showToast("Welcome, " + data.user.name + ".");
+    window.location.hash = "#/dashboard";
+    router();
+  }catch(e){
+    btn.disabled = false; btn.textContent = "Create account";
+    err.textContent = e.message; err.classList.add("show");
+  }
+}
+async function submitLogin(){
+  var email = $("auth-email").value.trim(), password = $("auth-password").value;
+  var err = $("auth-error");
+  if(!email || !password){ err.textContent = "Fill in every field."; err.classList.add("show"); return; }
+  var btn = $("auth-submit"); btn.disabled = true; btn.textContent = "Signing in…";
+  try{
+    var res = await fetch(API_BASE + "/api/auth/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email:email, password:password }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Invalid email or password");
+    setAuth(data);
+    closeModal();
+    showToast("Welcome back, " + data.user.name + ".");
+    window.location.hash = "#/dashboard";
+    router();
+  }catch(e){
+    btn.disabled = false; btn.textContent = "Sign in";
+    err.textContent = e.message; err.classList.add("show");
+  }
+}
+async function doLogout(){
+  try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", headers: authHeaders() }); }catch(e){}
+  clearAuth();
+  showToast("Signed out.");
+  window.location.hash = "#/";
+  router();
+}
+
+/* ---- projects (shared, served by the Python backend) ---- */
 async function saveProject(p){
   p.updatedAt = Date.now();
   var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id), {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
     body: JSON.stringify(p)
   });
   if(!res.ok) throw new Error("Could not save project");
@@ -375,11 +437,14 @@ async function loadProject(id){
   }catch(e){ return null; }
 }
 async function loadMyProjects(){
-  var ids = await loadMyProjectIds();
-  var items = [];
-  for(var i=0;i<ids.length;i++){ var p = await loadProject(ids[i]); if(p) items.push(p); }
-  items.sort(function(a,b){ return (b.updatedAt||0) - (a.updatedAt||0); });
-  return items;
+  if(!isLoggedIn()) return [];
+  try{
+    var res = await fetch(API_BASE + "/api/projects/mine", { headers: authHeaders() });
+    if(!res.ok) return [];
+    var items = await res.json();
+    items.sort(function(a,b){ return (b.updatedAt||0) - (a.updatedAt||0); });
+    return items;
+  }catch(e){ return []; }
 }
 async function loadAllPublishedProjects(){
   try{
@@ -440,7 +505,7 @@ async function fetchRepoContext(owner, repo){
 /* ---------------- Coach API (proxied through the Python backend) ---------------- */
 async function callClaude(messages, system, maxTokens){
   var res = await fetch(API_BASE + "/api/coach", {
-    method:"POST", headers:{ "Content-Type":"application/json" },
+    method:"POST", headers: Object.assign({ "Content-Type":"application/json" }, authHeaders()),
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
   if(!res.ok){ throw new Error("Request failed (" + res.status + ")"); }
@@ -477,6 +542,16 @@ async function router(){
   if(matched.name === "landing"){
     root.innerHTML = '<div class="skel" style="height:400px;"></div>';
     try{ await renderLanding(root); }catch(e){ console.error(e); root.innerHTML = errorBlock(e); }
+    return;
+  }
+
+  if(!isLoggedIn()){
+    root.innerHTML = '<div id="topbar"><div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a></div></div>' +
+      '<div class="canvas" style="padding-top:100px;text-align:center;">' +
+        '<h1 class="page-title">Sign in required</h1>' +
+        '<p class="page-sub" style="margin:0 auto 24px;">Create a free account or sign in to continue.</p>' +
+        '<div style="display:flex;gap:10px;justify-content:center;"><button class="btn btn-ghost" onclick="openAuthModal(\'login\')">Sign In</button><button class="btn btn-primary" onclick="openAuthModal(\'signup\')">Get Started</button></div>' +
+      '</div>';
     return;
   }
 
@@ -544,7 +619,10 @@ async function renderLanding(root){
   '<nav id="landing-nav"><div class="wrap">' +
     '<div class="tb-title">SourceVenture</div>' +
     '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
-    '<div style="display:flex;gap:10px;"><button class="btn btn-ghost btn-sm" onclick="nav(\'#/dashboard\')">Sign In</button><button class="btn btn-primary btn-sm" onclick="nav(\'#/new\')">Get Started</button></div>' +
+    '<div style="display:flex;gap:10px;">' + (isLoggedIn() ?
+      '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
+      '<button class="btn btn-ghost btn-sm" onclick="openAuthModal(\'login\')">Sign In</button><button class="btn btn-primary btn-sm" onclick="openAuthModal(\'signup\')">Get Started</button>'
+    ) + '</div>' +
   '</div></nav>' +
 
   '<header class="hero"><div class="wrap hero-grid">' +
@@ -595,7 +673,7 @@ async function renderDashboard(main){
 
   main.innerHTML = '<div class="canvas-wide">' +
     '<div class="eyebrow">Overview</div>' +
-    '<h1 class="page-title">' + (STATE.me.founderName ? "Welcome back, " + escapeHtml(STATE.me.founderName) : "Your workspace") + '</h1>' +
+    '<h1 class="page-title">Welcome back, ' + escapeHtml(STATE.auth.user.name) + '</h1>' +
     '<p class="page-sub stack-lg">Everything about your projects, coaching sessions and investor visibility, in one place.</p>' +
     '<div class="stat-row">' +
       '<div class="card stat-card"><div class="lbl">Published</div><div class="val">' + published.length + '</div></div>' +
@@ -644,7 +722,6 @@ async function renderNewProject(main){
     '<p class="page-sub stack-lg">Free. Connects to a real public GitHub repo so your coach has real context from the start.</p>' +
     '<div class="card" style="padding:28px;">' +
       '<div class="form-error" id="np-error"></div>' +
-      '<div class="field"><label>Your name <span class="req">*</span></label><input type="text" id="np-founder" placeholder="Ada Lovelace" value="' + escapeHtml(STATE.me.founderName) + '" /></div>' +
       '<div class="field"><label>Project name <span class="req">*</span></label><input type="text" id="np-name" placeholder="neural-mesh-core" /></div>' +
       '<div class="field"><label>One-line tagline <span class="req">*</span></label><input type="text" id="np-tagline" placeholder="What it does, in one sentence" /></div>' +
       '<div class="field"><label>Category</label><input type="text" id="np-category" placeholder="e.g. DevTools, AI / ML, DeFi Infrastructure — optional, we’ll infer from the repo if left blank" /></div>' +
@@ -656,7 +733,6 @@ async function renderNewProject(main){
 }
 
 async function submitNewProject(){
-  var founder = $("np-founder").value.trim();
   var name = $("np-name").value.trim();
   var tagline = $("np-tagline").value.trim();
   var category = $("np-category").value.trim();
@@ -664,7 +740,7 @@ async function submitNewProject(){
   var repoUrl = $("np-repo").value.trim();
   var err = $("np-error");
 
-  if(!founder || !name || !tagline || !pitch || !repoUrl){
+  if(!name || !tagline || !pitch || !repoUrl){
     err.textContent = "Fill in every required field — your coach needs all of it.";
     err.classList.add("show");
     return;
@@ -679,10 +755,8 @@ async function submitNewProject(){
   var btn = $("np-submit");
   btn.disabled = true; btn.textContent = "Publishing…";
 
-  await saveMe({ founderName: founder });
-
   var project = {
-    id: uid("proj"), ownerVisitorId: STATE.me.visitorId, founder: founder,
+    id: uid("proj"), founder: STATE.auth.user.name,
     name: name, tagline: tagline, category: category, pitch: pitch, description: tagline,
     repoUrl: repoUrl, owner: parsed.owner, repo: parsed.repo,
     language:null, stars:null, contributors:null, files:[], readmeOk:false,
@@ -705,7 +779,6 @@ async function submitNewProject(){
 
   try{
     await saveProject(project);
-    await addMyProjectId(project.id);
     showToast(project.name + " is live.");
     nav("#/coach/" + project.id);
   }catch(e){
@@ -1083,27 +1156,25 @@ async function renderSettings(main, tab){
 
 function renderAccountTab(el){
   el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;">' +
-    '<div class="field"><label>Name</label><input type="text" id="set-name" value="' + escapeHtml(STATE.me.founderName) + '" /></div>' +
-    '<div class="field"><label>Email</label><input type="email" id="set-email" value="' + escapeHtml(STATE.me.founderEmail) + '" /></div>' +
-    '<button class="btn btn-ghost btn-sm" onclick="saveAccountTab()">Save</button>' +
+    '<div class="field"><label>Name</label><input type="text" value="' + escapeHtml(STATE.auth.user.name) + '" disabled /></div>' +
+    '<div class="field"><label>Email</label><input type="email" value="' + escapeHtml(STATE.auth.user.email) + '" disabled /></div>' +
+    '<p class="muted" style="font-size:12px;">Set at signup — editing profile fields isn\'t supported in this preview.</p>' +
   '</div>';
 }
-async function saveAccountTab(){
-  await saveMe({ founderName: $("set-name").value.trim(), founderEmail: $("set-email").value.trim() });
-  showToast("Saved.");
-}
 function renderSecurityTab(el){
-  el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;"><p class="muted" style="font-size:13.5px;margin-bottom:16px;">This preview uses a lightweight per-browser identity — there’s no password to manage. A production build would add real authentication here.</p>' +
+  el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;"><p class="muted" style="font-size:13.5px;margin-bottom:16px;">Signed in as ' + escapeHtml(STATE.auth.user.email) + '. Your password is stored hashed on the backend and never sent back to the browser.</p>' +
+    '<button class="btn btn-ghost btn-sm" style="margin-bottom:10px;" onclick="doLogout()">Log out</button><br/>' +
     '<button class="btn btn-danger btn-sm" onclick="confirmResetData()">Clear all my local data</button></div>';
 }
 function confirmResetData(){
-  openModal('<h3>Clear your local data?</h3><p class="modal-sub">Removes your projects, drafts, coach chats and preferences from this browser.</p>' +
+  openModal('<h3>Clear your local data?</h3><p class="modal-sub">Removes your drafts, coach chats and preferences from this browser (your published projects stay on the backend).</p>' +
     '<div class="modal-actions"><button class="btn btn-danger btn-block" onclick="doResetData()">Clear my data</button></div>');
 }
 async function doResetData(){
-  ["myProjectIds","me"].forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+  ["me"].forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
+  Object.keys(localStorage).forEach(function(k){ if(k.indexOf("chat:") === 0 || k.indexOf("usage:") === 0) localStorage.removeItem(k); });
   closeModal(); showToast("Local data cleared.");
-  nav("#/"); setTimeout(function(){ window.location.reload(); }, 400);
+  window.location.hash = "#/"; setTimeout(function(){ window.location.reload(); }, 400);
 }
 function renderPrivacyTab(el){
   el.innerHTML = '<div class="card" style="padding:24px;max-width:520px;"><p class="muted" style="font-size:13.5px;line-height:1.6;">Published projects and any investor summary you approve are stored on this SourceVenture backend and visible to everyone using this deployment. Drafts, coach chats and usage counters stay private to your browser. Repository data is fetched from GitHub’s public API; coach conversations are sent to your own Python backend, which forwards them to the Claude API using a key you control.</p></div>';
