@@ -859,6 +859,7 @@ async function renderCoach(main, id){
         '</div>' +
       '</div>' +
       '<div class="coach-side">' +
+        '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button></div>' +
         '<div class="coach-side-block"><h4>Project context</h4><div class="metric-row"><span>Repo</span><span class="mval mono" style="font-size:11px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</span></div>' +
           '<div class="metric-row"><span>Stars</span><span class="mval">' + (p.stars!=null?p.stars:"—") + '</span></div>' +
           '<div class="metric-row"><span>Contributors</span><span class="mval">' + (p.contributors!=null?p.contributors:"—") + '</span></div>' +
@@ -924,6 +925,13 @@ function renderCapNote(){
 }
 function handleCoachKey(e){ if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendCoachMessage(); } }
 
+function requestIdeaEvaluation(){
+  var input = $("coach-input");
+  if(!input) return;
+  input.value = "Evaluate my startup idea — problem & market, differentiation, execution signal, biggest risk, next concrete step.";
+  sendCoachMessage();
+}
+
 function coachSystemPrompt(p, ctx){
   var repoBlock = "No public repo data could be fetched for this session — coach on the pitch alone.";
   if(ctx && (ctx.description || ctx.readme)){
@@ -940,6 +948,7 @@ function coachSystemPrompt(p, ctx){
   }
   return "You are the SourceVenture Coach — a direct, technically credible mentor for a solo or small-team founder. This conversation is private; it is never shown to investors. " +
     "Ground your advice in the real project details below whenever relevant. When suggesting code changes, use short fenced code blocks. Be honest about weaknesses, but constructive. Keep replies tight. Never claim to have taken actions you didn't take (you cannot run code, browse further, or push commits).\n\n" +
+    "When the founder asks you to evaluate, assess, or review the startup idea itself (not just the code), structure your answer under these headers, in this order: **Problem & market** (is the problem real, how big, who has it), **Differentiation** (what's the actual edge, and against whom), **Execution signal** (what the repo/pitch shows about ability to ship — cite specifics, don't guess), **Biggest risk** (the single thing most likely to kill this), **Next concrete step** (one thing to do this week, not a vague list). Ground every claim in the pitch or repo data given to you; say explicitly when you don't have enough information to judge something rather than inventing traction, market size, or user numbers.\n\n" +
     "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\n\n" + repoBlock;
 }
 
