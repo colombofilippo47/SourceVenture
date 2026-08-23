@@ -68,6 +68,7 @@ serving both sides over HTTPS.
 | GET    | `/api/projects/{id}` | no | one project                      |
 | PUT    | `/api/projects/{id}` | yes | create/update (owner only)       |
 | POST   | `/api/coach`      | yes  | proxies one turn to Claude        |
+| POST   | `/api/investors/match` | yes | AI-ranks published projects against an investor's stated interest/amount |
 
 ## Before this goes anywhere public
 

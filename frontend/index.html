@@ -1106,10 +1106,60 @@ async function renderInvestors(main){
         '<button class="btn btn-primary" onclick="openInvestorApplyModal()"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>' + (open ? "Apply for access" : "Notify me when access opens") + '</button>') +
     '</div>' +
 
+    '<div class="card stack-lg" style="padding:24px;">' +
+      '<h3 style="font-size:16px;margin-bottom:4px;">Find your match</h3>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:16px;">Describe what you\'re looking to invest in — our AI ranks published projects against it.</p>' +
+      '<div class="field"><label>What are you interested in?</label><textarea id="match-interests" rows="2" placeholder="e.g. developer tools for small teams, early-stage, technical founder"></textarea></div>' +
+      '<div class="field-row">' +
+        '<div class="field"><label>Min amount (USD)</label><input type="number" id="match-min" placeholder="10000" /></div>' +
+        '<div class="field"><label>Max amount (USD)</label><input type="number" id="match-max" placeholder="250000" /></div>' +
+      '</div>' +
+      '<button class="btn btn-primary" id="match-submit" onclick="findInvestorMatches()">Find matches</button>' +
+      '<div id="match-results" style="margin-top:18px;"></div>' +
+    '</div>' +
+
     '<div id="dir-list"></div>' +
   '</div>';
 
   renderDirList(published, open);
+}
+
+async function findInvestorMatches(){
+  var interests = $("match-interests").value.trim();
+  var results = $("match-results");
+  if(!interests){ showToast("Describe what you're looking for first."); return; }
+  if(!isLoggedIn()){ openAuthModal("login"); return; }
+  var btn = $("match-submit");
+  btn.disabled = true; btn.textContent = "Searching…";
+  results.innerHTML = '<div class="skel" style="height:80px;"></div>';
+  try{
+    var res = await fetch(API_BASE + "/api/investors/match", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        interests: interests,
+        minAmount: $("match-min").value ? Number($("match-min").value) : null,
+        maxAmount: $("match-max").value ? Number($("match-max").value) : null
+      })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not find matches");
+    if(!data.matches || !data.matches.length){
+      results.innerHTML = '<p class="muted" style="font-size:13px;">No strong matches in the current directory yet — try broadening your description.</p>';
+    } else {
+      results.innerHTML = data.matches.map(function(p){
+        return '<div class="dir-row" style="grid-template-columns:1fr;cursor:default;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">' +
+            '<div><div class="n">' + escapeHtml(p.name) + '</div><div class="muted" style="font-size:12px;margin-top:2px;">' + escapeHtml(p.tagline||"") + '</div></div>' +
+            '<span class="dir-cat" style="flex:none;">' + (p.matchScore!=null ? p.matchScore + "% match" : "match") + '</span>' +
+          '</div>' +
+          (p.matchReason ? '<p class="muted" style="font-size:12.5px;margin-top:8px;">' + escapeHtml(p.matchReason) + '</p>' : "") +
+        '</div>';
+      }).join("");
+    }
+  }catch(e){
+    results.innerHTML = '<p class="muted" style="font-size:13px;">' + escapeHtml(e.message) + '</p>';
+  }
+  btn.disabled = false; btn.textContent = "Find matches";
 }
 
 function renderDirList(published, open){
