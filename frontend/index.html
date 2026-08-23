@@ -577,9 +577,16 @@ async function callClaude(messages, system, maxTokens){
     method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
+  if(res.status === 503){ throw new Error("NOT_CONFIGURED"); }
   if(!res.ok){ throw new Error("Request failed (" + res.status + ")"); }
   var data = await res.json();
   return data.text || "";
+}
+function friendlyAiError(e){
+  if(e && e.message === "NOT_CONFIGURED"){
+    return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add an Anthropic API key in backend/.env. This isn't something you can fix by retrying.";
+  }
+  return "Something went wrong reaching the AI. Try again in a moment.";
 }
 /* ============================================================
    ROUTER
@@ -1046,7 +1053,7 @@ async function sendCoachMessage(){
     appendCoachMsg("assistant", reply || "I didn't get a usable reply — try again.");
   }catch(e){
     var el2 = document.getElementById("coach-typing"); if(el2) el2.remove();
-    appendCoachMsg("assistant", "Something went wrong reaching the coach (" + e.message + "). Is the Python backend running? Try again in a moment.", true);
+    appendCoachMsg("assistant", friendlyAiError(e), true);
   }
   renderCapNote();
 }
@@ -1400,7 +1407,7 @@ async function sendHelpMessage(){
     var reply = await callClaude(apiMessages, helpSystemPrompt(), 500);
     HELP_CHAT.messages.push({ role:"assistant", content: reply || "I didn't get a usable reply — try again.", ts:Date.now() });
   }catch(e){
-    HELP_CHAT.messages.push({ role:"assistant", content:"Something went wrong reaching the assistant. Try again in a moment.", ts:Date.now() });
+    HELP_CHAT.messages.push({ role:"assistant", content: friendlyAiError(e), ts:Date.now() });
   }
   renderHelpMessages();
   saveHelpChat();
