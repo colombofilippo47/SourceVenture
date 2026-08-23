@@ -166,9 +166,6 @@ p{margin:0;}
 .ln-links a{font-size:13.5px;color:var(--on-surface-variant);}
 .ln-links a:hover{color:var(--on-surface);}
 @media(max-width:860px){.ln-links{display:none;}}
-.gh-pill{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;border:1px solid var(--outline-variant);color:var(--on-surface-variant);font-family:var(--font-mono);font-size:12px;transition:border-color .2s var(--ease-out-expo),color .2s var(--ease-out-expo);}
-.gh-pill:hover{border-color:var(--border);color:var(--on-surface);}
-.gh-pill .gh-count{color:var(--tertiary);}
 .hero{padding:110px 0 120px;}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
 @media(max-width:940px){.hero-grid{grid-template-columns:1fr;}}
@@ -692,10 +689,6 @@ async function renderLanding(root){
     '<div class="tb-title">SourceVenture</div>' +
     '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
     '<div style="display:flex;gap:10px;align-items:center;">' +
-      '<a class="gh-pill" href="https://github.com/colombofilippo47/SourceVenture" target="_blank" rel="noopener">' +
-        '<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.074.55-.174.55-.386 0-.19-.007-.693-.01-1.36-2.226.484-2.695-1.073-2.695-1.073-.364-.924-.888-1.17-.888-1.17-.726-.496.055-.486.055-.486.803.056 1.225.824 1.225.824.714 1.223 1.873.87 2.33.665.072-.517.28-.87.508-1.07-1.777-.202-3.644-.888-3.644-3.953 0-.873.312-1.587.823-2.147-.082-.202-.357-1.015.078-2.117 0 0 .672-.215 2.2.82a7.66 7.66 0 0 1 2.003-.27c.68.003 1.365.092 2.003.27 1.527-1.035 2.198-.82 2.198-.82.437 1.102.163 1.915.08 2.117.512.56.822 1.274.822 2.147 0 3.073-1.87 3.749-3.653 3.947.287.246.543.735.543 1.48 0 1.07-.01 1.933-.01 2.196 0 .214.144.464.55.386A8.001 8.001 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>' +
-        '<span>Star</span><span class="gh-count" id="gh-count"></span>' +
-      '</a>' +
       (isLoggedIn() ?
         '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
         '<button class="btn btn-ghost btn-sm" onclick="openAuthModal(\'login\')">Sign In</button><button class="btn btn-primary btn-sm" onclick="openAuthModal(\'signup\')">Get Started</button>'
@@ -739,19 +732,6 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span></div></footer>';
-
-  loadGhStars();
-}
-
-async function loadGhStars(){
-  var el = $("gh-count");
-  if(!el) return;
-  try{
-    var res = await fetch("https://api.github.com/repos/colombofilippo47/SourceVenture");
-    if(!res.ok) return;
-    var meta = await res.json();
-    if(typeof meta.stargazers_count === "number") el.textContent = meta.stargazers_count;
-  }catch(e){}
 }
 /* ============================================================
    DASHBOARD (Overview)
