@@ -8,10 +8,9 @@ talks to it over HTTP.
 
 - **Accounts** — email + password signup/login. Passwords are hashed
   (PBKDF2-HMAC-SHA256, 200k iterations, random salt per user) and never
-  stored or logged in plain text. A successful login returns a bearer token
-  tied to a row in `sessions`; the frontend sends it back as
-  `Authorization: Bearer <token>` on every request that needs to know who's
-  asking.
+  stored or logged in plain text. A successful login sets an httpOnly,
+  `SameSite=Lax` session cookie tied to a row in `sessions` — JavaScript
+  never touches the token itself, which limits what an XSS bug could steal.
 - **Projects** — a founder's pitch + GitHub repo, stored as a JSON blob plus
   a few indexed columns (`owner_user_id`, `status`, timestamps) so the API
   can filter without deserializing everything. Only the owner can update
@@ -21,13 +20,23 @@ talks to it over HTTP.
   `ANTHROPIC_API_KEY` and forwards the request. This is the load-bearing
   reason the backend exists at all: an API key embedded in frontend
   JavaScript would be public the moment the page loads.
+- **Rate limiting** — an in-memory sliding-window limiter caps signup (5 /
+  10 min per IP), login (10 / 10 min per IP) and the coach proxy (30 / hour
+  per account), so a single process can't be used for credential stuffing
+  or to run up your Anthropic bill. It resets if the process restarts and
+  doesn't share state across multiple instances — fine for one server,
+  not for a scaled-out deployment (see below).
+- **Security headers** — every response gets `X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy` and a minimal `Permissions-Policy`;
+  `Strict-Transport-Security` is added automatically once requests arrive
+  over HTTPS.
 
 ## Data model (SQLite, `data.db`)
 
 | table      | purpose                                            |
 |------------|-----------------------------------------------------|
 | `users`    | id, email (unique), name, password_hash, created_at |
-| `sessions` | bearer token → user_id, with an expiry              |
+| `sessions` | session cookie value → user_id, with an expiry       |
 | `projects` | id, owner_user_id, status, timestamps, JSON `data`   |
 
 ## Run locally
@@ -41,13 +50,18 @@ cp .env.example .env   # then paste your ANTHROPIC_API_KEY into .env
 uvicorn main:app --reload --port 8000
 ```
 
+`CORS_ORIGINS` in `.env` must list the exact origin(s) the frontend is
+served from (default `http://localhost:5500`) — cookie-based auth requires
+an explicit origin, `*` won't work. Set `COOKIE_SECURE=true` once you're
+serving both sides over HTTPS.
+
 ## Endpoints
 
 | method | path              | auth | purpose                          |
 |--------|-------------------|------|-----------------------------------|
-| POST   | `/api/auth/signup`| no   | create an account, returns a token |
-| POST   | `/api/auth/login` | no   | returns a token                   |
-| POST   | `/api/auth/logout`| yes  | invalidates the current token     |
+| POST   | `/api/auth/signup`| no   | create an account, sets the session cookie |
+| POST   | `/api/auth/login` | no   | sets the session cookie           |
+| POST   | `/api/auth/logout`| yes  | invalidates and clears the cookie |
 | GET    | `/api/auth/me`    | yes  | current user                      |
 | GET    | `/api/projects`   | no   | published projects (public)       |
 | GET    | `/api/projects/mine` | yes | the current user's own projects |
@@ -57,33 +71,34 @@ uvicorn main:app --reload --port 8000
 
 ## Before this goes anywhere public
 
-This is a working prototype, not a hardened production service. In the order
-you'd actually hit them:
+This is a working prototype, not a hardened production service. What's
+already handled: server-side auth checks, hashed passwords, httpOnly
+session cookies, rate limiting on the sensitive endpoints, security
+headers, and per-owner access control on projects. Still missing, in the
+order you'd actually hit them:
 
-1. **HTTPS everywhere.** Bearer tokens over plain HTTP are readable by
-   anyone on the network path. Put this behind a reverse proxy (Caddy,
-   nginx, or your host's built-in TLS) before it's reachable outside your
-   laptop.
-2. **Lock down CORS.** `CORS_ORIGINS=*` (the default) is fine for local
-   dev; in production set it to your actual frontend origin.
-3. **Rate-limit `/api/auth/*` and `/api/coach`.** Nothing currently stops
-   someone from hammering the login endpoint (credential stuffing) or
-   running your Anthropic bill up through the coach proxy. Add per-IP and
-   per-account limits.
-4. **Session hardening.** Bearer tokens in `localStorage` are simple and
-   fine for a prototype, but are readable by any script on the page (XSS
-   risk). A production build would move to `httpOnly` cookies with
-   `SameSite` set, plus CSRF protection on state-changing requests.
-5. **Password policy + email verification.** There's currently no minimum
-   password length check server-side and no email confirmation loop — an
-   account can be created with any string as a password and an unowned
-   email address.
-6. **Secrets management.** `.env` is fine locally; in production use your
+1. **HTTPS everywhere.** Set `COOKIE_SECURE=true` and put this behind a
+   reverse proxy (Caddy, nginx, or your host's built-in TLS) before it's
+   reachable outside your laptop — cookies without `Secure` are readable
+   on the network path over plain HTTP.
+2. **CSRF protection.** Cookie-based sessions need it for state-changing
+   requests (`PUT /api/projects/*`, `POST /api/coach`) once this is
+   reachable from more than one trusted origin — add a CSRF token or
+   double-submit cookie pattern.
+3. **Shared rate-limit storage.** The current limiter is in-process memory;
+   move it to Redis (or similar) if you ever run more than one backend
+   instance, otherwise each instance gets its own separate quota.
+4. **Password policy + email verification.** Signup enforces an 8-char
+   minimum but there's no email confirmation loop — anyone can register an
+   address they don't own.
+5. **Secrets management.** `.env` is fine locally; in production use your
    host's secret store (not a committed file, not a plain environment
    variable visible in `ps` output where avoidable).
-7. **Back up `data.db`.** SQLite is fine at this scale, but there's no
+6. **Back up `data.db`.** SQLite is fine at this scale, but there's no
    automated backup — losing the file loses every account and project.
    A managed Postgres instance removes this concern if the project grows.
-8. **Structured logging + error monitoring.** Right now failures only show
+7. **Structured logging + error monitoring.** Right now failures only show
    up in the uvicorn console. Add real logging and something like Sentry
    before you need to debug a production incident blind.
+8. **Dependency scanning.** Run `pip list --outdated` / `pip-audit`
+   periodically — nothing here does it automatically yet.

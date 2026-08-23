@@ -15,7 +15,7 @@ and how to run everything locally.
 Data model (SQLite, one file: data.db)
 ---------------------------------------
 - users:    one row per account (email + salted/hashed password)
-- sessions: one row per login, referenced by a bearer token
+- sessions: one row per login, referenced by the `session_token` cookie
 - projects: one row per project, JSON blob in `data` plus a few indexed
             columns (owner, status, timestamps) used for filtering
 
@@ -23,10 +23,11 @@ Auth
 ----
 Simple email/password accounts. Passwords are hashed with PBKDF2-HMAC-SHA256
 (200k iterations) plus a random salt — never stored or logged in plain text.
-Logging in returns an opaque bearer token (`Authorization: Bearer <token>`)
-that identifies a row in `sessions`. There is no OAuth/SSO and no email
-verification — this is intentionally minimal, see README.md for what a real
-production hardening pass would add.
+Logging in sets an httpOnly, SameSite=Lax session cookie (`session_token`)
+that identifies a row in `sessions`; JavaScript never reads the token
+directly, which limits the blast radius of an XSS bug. There is no
+OAuth/SSO and no email verification — see README.md for what a real
+production hardening pass would still add.
 """
 
 import hashlib
@@ -41,9 +42,9 @@ from typing import List, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 load_dotenv()
 
@@ -52,15 +53,32 @@ ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 DB_PATH = Path(__file__).parent / "data.db"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_NAME = "session_token"
+
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:5500").split(",") if o.strip()]
 
 app = FastAPI(title="SourceVenture API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
 
 
 def get_db():
@@ -95,6 +113,28 @@ def get_db():
     return conn
 
 
+# ------------------------------------------------------------- rate limiting
+# In-memory sliding-window limiter, keyed by (bucket, client ip). Good enough
+# for a single-process deployment; a real multi-instance deployment would
+# move this to Redis.
+_rate_limit_hits: dict = {}
+
+
+def check_rate_limit(bucket: str, key: str, limit: int, window_seconds: int):
+    now = time.time()
+    slot = _rate_limit_hits.setdefault((bucket, key), [])
+    cutoff = now - window_seconds
+    while slot and slot[0] < cutoff:
+        slot.pop(0)
+    if len(slot) >= limit:
+        raise HTTPException(status_code=429, detail="Too many attempts — try again later")
+    slot.append(now)
+
+
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
 # ---------------------------------------------------------------- passwords
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
@@ -115,16 +155,28 @@ def user_public(row) -> dict:
     return {"id": row[0], "email": row[1], "name": row[2]}
 
 
+def set_session_cookie(response: Response, token: str):
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
 # ------------------------------------------------------------------- models
 class SignupRequest(BaseModel):
     email: EmailStr
-    password: str
-    name: str
+    password: str = Field(min_length=8, max_length=200)
+    name: str = Field(min_length=1, max_length=120)
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=200)
 
 
 class ProjectIn(BaseModel):
@@ -138,7 +190,7 @@ class ProjectIn(BaseModel):
 
 class CoachMessage(BaseModel):
     role: str
-    content: str
+    content: str = Field(max_length=8000)
 
 
 class CoachRequest(BaseModel):
@@ -148,10 +200,10 @@ class CoachRequest(BaseModel):
 
 
 # --------------------------------------------------------------------- auth
-def get_current_user(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    token = authorization[len("Bearer ") :]
+def get_current_user(request: Request):
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not signed in")
     conn = get_db()
     try:
         row = conn.execute(
@@ -185,7 +237,8 @@ def health():
 
 
 @app.post("/api/auth/signup")
-def signup(req: SignupRequest):
+def signup(req: SignupRequest, request: Request, response: Response):
+    check_rate_limit("signup", client_ip(request), limit=5, window_seconds=600)
     conn = get_db()
     try:
         existing = conn.execute("SELECT id FROM users WHERE email = ?", (req.email,)).fetchone()
@@ -198,13 +251,15 @@ def signup(req: SignupRequest):
         )
         token = create_session(conn, user_id)
         conn.commit()
-        return {"token": token, "user": {"id": user_id, "email": req.email, "name": req.name}}
+        set_session_cookie(response, token)
+        return {"user": {"id": user_id, "email": req.email, "name": req.name}}
     finally:
         conn.close()
 
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request, response: Response):
+    check_rate_limit("login", client_ip(request), limit=10, window_seconds=600)
     conn = get_db()
     try:
         row = conn.execute(
@@ -214,21 +269,23 @@ def login(req: LoginRequest):
             raise HTTPException(status_code=401, detail="Invalid email or password")
         token = create_session(conn, row[0])
         conn.commit()
-        return {"token": token, "user": {"id": row[0], "email": row[1], "name": row[2]}}
+        set_session_cookie(response, token)
+        return {"user": {"id": row[0], "email": row[1], "name": row[2]}}
     finally:
         conn.close()
 
 
 @app.post("/api/auth/logout")
-def logout(authorization: Optional[str] = Header(None)):
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization[len("Bearer ") :]
+def logout(request: Request, response: Response):
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
         conn = get_db()
         try:
             conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             conn.commit()
         finally:
             conn.close()
+    response.delete_cookie(COOKIE_NAME, path="/")
     return {"ok": True}
 
 
@@ -309,9 +366,12 @@ def upsert_project(project_id: str, project: ProjectIn, current_user=Depends(get
 
 
 @app.post("/api/coach")
-async def coach(req: CoachRequest, current_user=Depends(get_current_user)):
+async def coach(req: CoachRequest, request: Request, current_user=Depends(get_current_user)):
+    check_rate_limit("coach", current_user["id"], limit=30, window_seconds=3600)
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured on the server")
+    if len(req.messages) > 60:
+        raise HTTPException(status_code=400, detail="Conversation too long")
 
     async with httpx.AsyncClient(timeout=60) as client:
         res = await client.post(
@@ -323,7 +383,7 @@ async def coach(req: CoachRequest, current_user=Depends(get_current_user)):
             },
             json={
                 "model": ANTHROPIC_MODEL,
-                "max_tokens": req.maxTokens or 1200,
+                "max_tokens": min(req.maxTokens or 1200, 4096),
                 "system": req.system,
                 "messages": [m.model_dump() for m in req.messages],
             },

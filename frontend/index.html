@@ -332,12 +332,20 @@ function lsGetJSON(key, fallback){
 }
 function lsSetJSON(key, obj){ lsSet(key, JSON.stringify(obj)); }
 
-/* ---- account (real accounts on the Python backend, email + password) ---- */
-function loadAuth(){ STATE.auth = lsGetJSON("auth", null); return STATE.auth; }
-function isLoggedIn(){ return !!(STATE.auth && STATE.auth.token); }
-function authHeaders(){ return isLoggedIn() ? { "Authorization": "Bearer " + STATE.auth.token } : {}; }
-function setAuth(auth){ STATE.auth = auth; lsSetJSON("auth", auth); }
-function clearAuth(){ STATE.auth = null; try{ localStorage.removeItem("auth"); }catch(e){} }
+/* ---- account (real accounts on the Python backend, httpOnly session cookie) ---- */
+// The session lives in an httpOnly cookie the browser sends automatically —
+// JS never touches the token itself. `credentials: 'include'` is what tells
+// fetch() to send/accept that cookie on cross-origin requests to API_BASE.
+function isLoggedIn(){ return !!(STATE.auth && STATE.auth.user); }
+async function checkAuth(){
+  try{
+    var res = await fetch(API_BASE + "/api/auth/me", { credentials: "include" });
+    STATE.auth = res.ok ? { user: await res.json() } : null;
+  }catch(e){ STATE.auth = null; }
+  return STATE.auth;
+}
+function setAuth(user){ STATE.auth = { user: user }; }
+function clearAuth(){ STATE.auth = null; }
 
 async function ensureMe(){
   var me = lsGetJSON("me", null);
@@ -350,7 +358,7 @@ async function ensureMe(){
     lsSetJSON("me", me);
   }
   STATE.me = me;
-  loadAuth();
+  await checkAuth();
   return me;
 }
 async function saveMe(patch){
@@ -376,12 +384,13 @@ async function submitSignup(){
   var name = $("auth-name").value.trim(), email = $("auth-email").value.trim(), password = $("auth-password").value;
   var err = $("auth-error");
   if(!name || !email || !password){ err.textContent = "Fill in every field."; err.classList.add("show"); return; }
+  if(password.length < 8){ err.textContent = "Password must be at least 8 characters."; err.classList.add("show"); return; }
   var btn = $("auth-submit"); btn.disabled = true; btn.textContent = "Creating…";
   try{
-    var res = await fetch(API_BASE + "/api/auth/signup", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name:name, email:email, password:password }) });
+    var res = await fetch(API_BASE + "/api/auth/signup", { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name:name, email:email, password:password }) });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || "Could not create account");
-    setAuth(data);
+    setAuth(data.user);
     closeModal();
     showToast("Welcome, " + data.user.name + ".");
     window.location.hash = "#/dashboard";
@@ -397,10 +406,10 @@ async function submitLogin(){
   if(!email || !password){ err.textContent = "Fill in every field."; err.classList.add("show"); return; }
   var btn = $("auth-submit"); btn.disabled = true; btn.textContent = "Signing in…";
   try{
-    var res = await fetch(API_BASE + "/api/auth/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email:email, password:password }) });
+    var res = await fetch(API_BASE + "/api/auth/login", { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email:email, password:password }) });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || "Invalid email or password");
-    setAuth(data);
+    setAuth(data.user);
     closeModal();
     showToast("Welcome back, " + data.user.name + ".");
     window.location.hash = "#/dashboard";
@@ -411,7 +420,7 @@ async function submitLogin(){
   }
 }
 async function doLogout(){
-  try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", headers: authHeaders() }); }catch(e){}
+  try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include" }); }catch(e){}
   clearAuth();
   showToast("Signed out.");
   window.location.hash = "#/";
@@ -423,7 +432,8 @@ async function saveProject(p){
   p.updatedAt = Date.now();
   var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id), {
     method: "PUT",
-    headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(p)
   });
   if(!res.ok) throw new Error("Could not save project");
@@ -439,7 +449,7 @@ async function loadProject(id){
 async function loadMyProjects(){
   if(!isLoggedIn()) return [];
   try{
-    var res = await fetch(API_BASE + "/api/projects/mine", { headers: authHeaders() });
+    var res = await fetch(API_BASE + "/api/projects/mine", { credentials: "include" });
     if(!res.ok) return [];
     var items = await res.json();
     items.sort(function(a,b){ return (b.updatedAt||0) - (a.updatedAt||0); });
@@ -505,7 +515,7 @@ async function fetchRepoContext(owner, repo){
 /* ---------------- Coach API (proxied through the Python backend) ---------------- */
 async function callClaude(messages, system, maxTokens){
   var res = await fetch(API_BASE + "/api/coach", {
-    method:"POST", headers: Object.assign({ "Content-Type":"application/json" }, authHeaders()),
+    method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" },
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
   if(!res.ok){ throw new Error("Request failed (" + res.status + ")"); }
