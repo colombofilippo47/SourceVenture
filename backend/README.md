@@ -15,29 +15,53 @@ talks to it over HTTP.
   a few indexed columns (`owner_user_id`, `status`, timestamps) so the API
   can filter without deserializing everything. Only the owner can update
   their own project (checked server-side, not just hidden in the UI).
-- **AI coach** — the frontend never talks to Anthropic directly. It posts
-  `{system, messages}` to `/api/coach`, which attaches the server-side
-  `ANTHROPIC_API_KEY` and forwards the request. This is the load-bearing
+- **AI coach** — the frontend never talks to an AI provider directly. It
+  posts `{system, messages}` to `/api/coach`, which attaches the
+  server-side key and forwards the request. This is the load-bearing
   reason the backend exists at all: an API key embedded in frontend
   JavaScript would be public the moment the page loads.
+- **Business rating council** — `POST /api/projects/{id}/rate` runs three
+  independently-prompted evaluators (a VC, a technical due-diligence
+  engineer, a growth analyst) in parallel, takes the median score per
+  dimension so one outlier judge can't swing the result, then a fourth
+  "chairman" call reviews all three panelists' full reasoning and
+  synthesizes one final, informed verdict (falling back to the median if
+  that call fails). Saving a project with real pitch changes re-runs this
+  automatically in the background — no button needed.
+- **Real investor gating** — `investor_applications` table + a threshold
+  check enforce access server-side (was a pure frontend localStorage flag
+  before, with zero backend enforcement). `investorSummary` is stripped
+  from every public response unless the caller is the project owner or an
+  approved investor.
 - **Rate limiting** — an in-memory sliding-window limiter caps signup (5 /
-  10 min per IP), login (10 / 10 min per IP) and the coach proxy (30 / hour
-  per account), so a single process can't be used for credential stuffing
-  or to run up your Anthropic bill. It resets if the process restarts and
-  doesn't share state across multiple instances — fine for one server,
-  not for a scaled-out deployment (see below).
+  10 min per IP), login (10 / 10 min per IP), the coach proxy (25 / rolling
+  24h per account, matching the disclosed free-tier cap), rating (10/hour)
+  and investor matching (20/hour), so a single process can't be used for
+  credential stuffing or to run up your AI provider bill. It resets if the
+  process restarts and doesn't share state across multiple instances —
+  fine for one server, not for a scaled-out deployment (see below).
+- **CSRF protection** — a double-submit cookie (`csrf_token`, not
+  httpOnly) that every state-changing request must echo back as an
+  `X-CSRF-Token` header. The frontend's `csrfHeaders()` helper does this
+  automatically.
 - **Security headers** — every response gets `X-Content-Type-Options`,
   `X-Frame-Options`, `Referrer-Policy` and a minimal `Permissions-Policy`;
   `Strict-Transport-Security` is added automatically once requests arrive
   over HTTPS.
+- **Email verification** — signup sends a verification link in the
+  background; without `RESEND_API_KEY` set it's just logged to the console
+  (fully testable on localhost with zero email setup). Nothing is gated on
+  `email_verified` yet — see below.
 
 ## Data model (SQLite, `data.db`)
 
-| table      | purpose                                            |
-|------------|-----------------------------------------------------|
-| `users`    | id, email (unique), name, password_hash, created_at |
-| `sessions` | session cookie value → user_id, with an expiry       |
-| `projects` | id, owner_user_id, status, timestamps, JSON `data`   |
+| table                  | purpose                                                        |
+|------------------------|-----------------------------------------------------------------|
+| `users`                | id, email (unique), name, password_hash, created_at, email_verified, verify_token |
+| `sessions`             | session cookie value → user_id, with an expiry                  |
+| `projects`             | id, owner_user_id, status, timestamps, JSON `data`               |
+| `investor_applications`| id, user_id (unique), name, firm, status (pending/approved), timestamps |
+| `project_ratings`      | project_id → last council rating (scores, verdict, risk, improvements) |
 
 ## Run locally
 
@@ -46,7 +70,7 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # then paste your ANTHROPIC_API_KEY into .env
+cp .env.example .env   # then paste your API key(s) into .env
 uvicorn main:app --reload --port 8000
 ```
 
@@ -55,51 +79,67 @@ served from (default `http://localhost:5500`) — cookie-based auth requires
 an explicit origin, `*` won't work. Set `COOKIE_SECURE=true` once you're
 serving both sides over HTTPS.
 
+**AI provider**: Gemini (free tier) is the primary provider for the coach,
+the rating council, and investor matching — `GEMINI_API_KEY` /
+`GEMINI_MODEL` (default `gemini-2.5-flash`). Anthropic is only reached as a
+paid last-resort fallback if Gemini is unset or a call fails
+(`ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`). Set neither and every AI route
+returns a 503 with a clear message instead of erroring confusingly.
+
 ## Endpoints
 
 | method | path              | auth | purpose                          |
 |--------|-------------------|------|-----------------------------------|
 | POST   | `/api/auth/signup`| no   | create an account, sets the session cookie |
 | POST   | `/api/auth/login` | no   | sets the session cookie           |
-| POST   | `/api/auth/logout`| yes  | invalidates and clears the cookie |
+| POST   | `/api/auth/logout`| yes + CSRF | invalidates and clears the cookie |
 | GET    | `/api/auth/me`    | yes  | current user                      |
-| GET    | `/api/projects`   | no   | published projects (public)       |
+| GET    | `/api/auth/verify/{token}` | no | confirms an account's email |
+| GET    | `/api/projects`   | no   | published projects (public) — `investorSummary` stripped unless owner/approved investor |
 | GET    | `/api/projects/mine` | yes | the current user's own projects |
-| GET    | `/api/projects/{id}` | no | one project                      |
-| PUT    | `/api/projects/{id}` | yes | create/update (owner only)       |
-| POST   | `/api/coach`      | yes  | proxies one turn to Claude        |
-| POST   | `/api/investors/match` | yes | AI-ranks published projects against an investor's stated interest/amount |
+| GET    | `/api/projects/{id}` | no | one project — same `investorSummary` stripping |
+| PUT    | `/api/projects/{id}` | yes + CSRF | create/update (owner only); fires an automatic re-rate in the background on real pitch changes |
+| POST   | `/api/projects/{id}/rate` | yes + CSRF | 3-judge council + chairman synthesis, stored server-side |
+| GET    | `/api/projects/{id}/rating` | no | the last stored council rating |
+| POST   | `/api/coach`      | yes + CSRF | proxies one turn to the AI, 25 msgs / rolling 24h free tier |
+| POST   | `/api/investors/apply` | yes + CSRF | submit an investor application (starts `pending`) |
+| GET    | `/api/investors/me` | yes | current user's application status |
+| GET    | `/api/investors/directory` | yes | full published-project list — 403 unless the threshold is met AND the caller is `approved` |
+| POST   | `/api/investors/match` | yes + CSRF | AI-ranks published projects against an investor's stated interest/amount |
+
+**Approving an investor application**: no admin UI exists yet — approve
+manually: `sqlite3 data.db "UPDATE investor_applications SET
+status='approved', decided_at=strftime('%s','now') WHERE user_id='<id>'"`.
+
+**Backups**: `python backup_db.py` copies `data.db` into `backups/` with a
+timestamp, keeping the 14 most recent by default (`--keep N` to change).
+No scheduler is wired up — run it manually, or point your host's own cron
+at it once this is actually deployed somewhere.
 
 ## Before this goes anywhere public
 
-This is a working prototype, not a hardened production service. What's
-already handled: server-side auth checks, hashed passwords, httpOnly
-session cookies, rate limiting on the sensitive endpoints, security
-headers, and per-owner access control on projects. Still missing, in the
+What's now handled: server-side auth checks, hashed passwords, httpOnly
+session cookies, CSRF (double-submit cookie) on every state-changing
+route, rate limiting on the sensitive endpoints, security headers,
+per-owner access control on projects, real server-enforced investor
+gating, `investorSummary` stripped from public responses, structured
+logging, a manual DB backup script, email verification (link sent, no
+enforcement yet), and a real free-tier AI provider. Still missing, in the
 order you'd actually hit them:
 
 1. **HTTPS everywhere.** Set `COOKIE_SECURE=true` and put this behind a
    reverse proxy (Caddy, nginx, or your host's built-in TLS) before it's
-   reachable outside your laptop — cookies without `Secure` are readable
-   on the network path over plain HTTP.
-2. **CSRF protection.** Cookie-based sessions need it for state-changing
-   requests (`PUT /api/projects/*`, `POST /api/coach`) once this is
-   reachable from more than one trusted origin — add a CSRF token or
-   double-submit cookie pattern.
-3. **Shared rate-limit storage.** The current limiter is in-process memory;
-   move it to Redis (or similar) if you ever run more than one backend
-   instance, otherwise each instance gets its own separate quota.
-4. **Password policy + email verification.** Signup enforces an 8-char
-   minimum but there's no email confirmation loop — anyone can register an
-   address they don't own.
-5. **Secrets management.** `.env` is fine locally; in production use your
-   host's secret store (not a committed file, not a plain environment
-   variable visible in `ps` output where avoidable).
-6. **Back up `data.db`.** SQLite is fine at this scale, but there's no
-   automated backup — losing the file loses every account and project.
-   A managed Postgres instance removes this concern if the project grows.
-7. **Structured logging + error monitoring.** Right now failures only show
-   up in the uvicorn console. Add real logging and something like Sentry
-   before you need to debug a production incident blind.
-8. **Dependency scanning.** Run `pip list --outdated` / `pip-audit`
-   periodically — nothing here does it automatically yet.
+   reachable outside your laptop.
+2. **Shared rate-limit storage.** The current limiter is in-process memory;
+   move it to Redis if you ever run more than one backend instance.
+3. **Enforce email verification.** The link/endpoint exist, but nothing
+   gates on `email_verified` yet.
+4. **Secrets management.** `.env` is fine locally; in production use your
+   host's secret store.
+5. **Automated backups.** `backup_db.py` exists but nothing calls it on a
+   schedule yet.
+6. **Error monitoring.** Logging goes to stdout; not shipped anywhere yet.
+7. **Dependency scanning.** Run `pip list --outdated` / `pip-audit`
+   periodically.
+8. **Investor-application admin UI.** Approving one is a direct SQL update
+   today (see above).

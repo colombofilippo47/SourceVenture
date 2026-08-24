@@ -1,6 +1,10 @@
 backend/.env
 backend/data.db
+backend/backups/
+backend/.venv/
 backend/__pycache__/
 *.pyc
 .DS_Store
 SourceVenture-main.zip
+landing/node_modules/
+landing/dist/

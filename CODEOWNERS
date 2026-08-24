@@ -1,0 +1,10 @@
+# Code ownership — 2-person split (backend / frontend). GitHub
+# auto-requests a review from the matching owner on any PR touching these
+# paths. Update the handles below if the split changes.
+/backend/   @colombofilippo47
+/frontend/  @apexmedialx-debug
+
+# Shared / repo-root files — either owner can touch these.
+/README.md
+/CONTRIBUTING.md
+/CODEOWNERS
