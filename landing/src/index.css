@@ -1,0 +1,247 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 400;
+  color: #000;
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+.page {
+  min-height: 100vh;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ---------- navbar ---------- */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  pointer-events: none;
+}
+.navbar > * {
+  pointer-events: auto;
+}
+
+.nav-left,
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-name {
+  display: none;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.menu-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #000;
+  border-radius: 999px;
+  padding: 6px 14px 6px 6px;
+}
+.menu-plus {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.menu-label {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tags-pill {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  background: #f4f4f6;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.65);
+}
+.dot-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- background video ---------- */
+.video-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bg-video {
+  width: 80%;
+  height: 80%;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+/* ---------- footer ---------- */
+.footer {
+  position: relative;
+  z-index: 30;
+  padding: 24px 16px;
+  background: linear-gradient(to top, #ffffff 0%, rgba(255, 255, 255, 0.8) 50%, transparent 100%);
+}
+.footer-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.footer-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.55);
+}
+.footer-subtitle .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #000;
+  flex-shrink: 0;
+}
+
+.headline {
+  margin: 12px 0 20px;
+  font-weight: 300;
+  font-size: clamp(2rem, 8vw, 4.5rem);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.cta-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.btn {
+  border-radius: 999px;
+  padding: 12px 20px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.btn-primary {
+  background: #000;
+  color: #fff;
+}
+.btn-secondary {
+  background: transparent;
+  color: #000;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.footer-right {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tag {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ---------- responsive ---------- */
+@media (min-width: 768px) {
+  .navbar {
+    padding: 24px 32px;
+  }
+  .brand-name {
+    display: block;
+  }
+  .tags-pill {
+    display: flex;
+  }
+  .menu-plus {
+    width: 24px;
+    height: 24px;
+  }
+  .dot-btn {
+    width: 24px;
+    height: 24px;
+  }
+  .video-wrap {
+    width: 100%;
+    height: 100%;
+  }
+  .bg-video {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
+  .footer {
+    padding: 40px 32px;
+  }
+  .footer-inner {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+  .headline {
+    font-size: clamp(2.5rem, 5.5vw, 4.5rem);
+  }
+  .footer-right {
+    justify-content: flex-end;
+  }
+}
