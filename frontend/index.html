@@ -39,6 +39,34 @@
   --nav-w:280px;
   --topbar-h:64px;
 }
+/* Light theme — same token set as :root above, re-pointed. Every rule in
+   this file already reads from these variables, so nothing else needs to
+   change per-component. Toggled via data-theme on <html> (see the inline
+   script in <head> for the flash-of-wrong-theme guard, and .theme-toggle
+   for the switch). */
+:root[data-theme="light"]{
+  --bg:#f4f5fb;
+  --surface-lowest:#eceef7;
+  --surface-low:#e4e7f4;
+  --surface:rgba(20,20,50,0.035);
+  --surface-high:rgba(20,20,50,0.06);
+  --surface-highest:rgba(20,20,50,0.10);
+  --surface-bright:rgba(20,20,50,0.14);
+  --on-surface:#13152b;
+  --on-surface-variant:#5b5f7a;
+  --outline:rgba(19,21,43,0.35);
+  --outline-variant:rgba(19,21,43,0.09);
+  --border:rgba(19,21,43,0.14);
+  --primary:#5E6AD2;
+  --primary-bright:#4c58c0;
+  --on-primary:#ffffff;
+  --primary-container:#4c58c0;
+  --on-primary-container:#ffffff;
+  --accent-glow:rgba(94,106,210,0.16);
+  --secondary:#5b5f7a;
+  --tertiary:#7c5cff;
+  --error:#d1453d;
+}
 *{box-sizing:border-box;}
 html{scroll-behavior:smooth;}
 body{margin:0;background:var(--bg);color:var(--on-surface);font-family:var(--font-body);font-size:14.5px;line-height:1.55;-webkit-font-smoothing:antialiased;position:relative;overflow-x:hidden;}
@@ -55,6 +83,10 @@ p{margin:0;}
 /* ---------- layered ambient background ---------- */
 #bg-fx{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;}
 .bg-base{position:absolute;inset:0;background:radial-gradient(ellipse at top,#0d0d14 0%,var(--bg) 50%,var(--surface-lowest) 100%);}
+:root[data-theme="light"] .bg-base{background:radial-gradient(ellipse at top,#ffffff 0%,var(--bg) 55%,var(--surface-lowest) 100%);}
+:root[data-theme="light"] .blob{opacity:.5;}
+:root[data-theme="light"] .bg-grid{opacity:.05;}
+:root[data-theme="light"] .bg-noise{opacity:.012;}
 .bg-grid{position:absolute;inset:0;height:900px;opacity:.025;background-image:linear-gradient(rgba(255,255,255,.6) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.6) 1px,transparent 1px);background-size:64px 64px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent);mask-image:linear-gradient(to bottom,#000,transparent);}
 .bg-noise{position:absolute;inset:0;opacity:.02;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
 .blob{position:absolute;border-radius:50%;will-change:transform;animation:blobFloat 9s var(--ease-out-expo) infinite;}
@@ -84,6 +116,7 @@ p{margin:0;}
 .wrap{max-width:1180px;margin:0 auto;padding:0 24px;}
 
 #topbar{height:var(--topbar-h);border-bottom:1px solid var(--outline-variant);background:rgba(5,5,6,.75);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:40;}
+:root[data-theme="light"] #topbar{background:rgba(244,245,251,.75);}
 #topbar .tb-left{display:flex;align-items:center;gap:14px;}
 #topbar .tb-title{font-family:var(--font-display);font-size:18px;font-weight:700;}
 #topbar .tb-divider{width:1px;height:16px;background:var(--outline-variant);}
@@ -91,9 +124,17 @@ p{margin:0;}
 #topbar .tb-right{display:flex;align-items:center;gap:6px;}
 #topbar .tb-icon{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);}
 #topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);}
+.theme-toggle{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);border:none;background:transparent;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo),color .2s var(--ease-out-expo);}
+.theme-toggle:hover{color:var(--primary);background:var(--surface-high);}
+.theme-toggle:active{transform:scale(0.85) rotate(-12deg);}
+.theme-toggle .material-symbols-outlined{transition:transform .4s var(--ease-out-expo),opacity .25s ease;}
+.theme-spin .material-symbols-outlined{animation:themeSpin .4s var(--ease-out-expo);}
+@keyframes themeSpin{0%{transform:rotate(0deg) scale(1);opacity:1;}45%{transform:rotate(160deg) scale(0.4);opacity:0;}55%{transform:rotate(200deg) scale(0.4);opacity:0;}100%{transform:rotate(360deg) scale(1);opacity:1;}}
+body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field textarea,.field select{transition:background-color .35s ease,border-color .35s ease,color .35s ease;}
 
 .app-layout{display:flex;min-height:calc(100vh - var(--topbar-h));}
 #sidenav{width:var(--nav-w);flex:none;border-right:1px solid var(--outline-variant);background:rgba(5,5,6,.4);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;flex-direction:column;position:sticky;top:var(--topbar-h);height:calc(100vh - var(--topbar-h));}
+:root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
 @media(max-width:900px){#sidenav{display:none;}}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
 .sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--tertiary));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(94,106,210,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;flex:none;}
@@ -161,6 +202,7 @@ p{margin:0;}
 .form-error.show{display:block;}
 
 #landing-nav{height:var(--topbar-h);border-bottom:1px solid var(--outline-variant);position:sticky;top:0;background:rgba(5,5,6,.75);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:40;}
+:root[data-theme="light"] #landing-nav{background:rgba(244,245,251,.75);}
 #landing-nav .wrap{height:100%;display:flex;align-items:center;justify-content:space-between;}
 .ln-links{display:flex;gap:26px;align-items:center;}
 .ln-links a{font-size:13.5px;color:var(--on-surface-variant);}
@@ -170,6 +212,7 @@ p{margin:0;}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
 @media(max-width:940px){.hero-grid{grid-template-columns:1fr;}}
 .hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;background:linear-gradient(to bottom,#fff,rgba(255,255,255,.95) 55%,rgba(255,255,255,.72));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+:root[data-theme="light"] .hero h1{background:linear-gradient(to bottom,#0d0f24,rgba(19,21,43,.92) 55%,rgba(19,21,43,.72));-webkit-background-clip:text;background-clip:text;}
 @media(max-width:940px){.hero h1{font-size:52px;}}
 @media(max-width:520px){.hero h1{font-size:36px;}}
 .hero .lead{font-size:16.5px;color:var(--on-surface-variant);max-width:480px;margin-bottom:28px;}
@@ -301,6 +344,16 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .help-input-row{border-top:1px solid var(--outline-variant);padding:10px 12px;display:flex;gap:8px;}
 .help-input-row textarea{flex:1;background:var(--surface-low);border:1px solid var(--outline-variant);border-radius:var(--radius);padding:9px 11px;color:var(--on-surface);font-size:13px;resize:none;min-height:38px;max-height:90px;}
 </style>
+<script>
+// Applied before body paints — avoids a flash of the wrong theme on load.
+(function(){
+  try{
+    var saved = localStorage.getItem("sv-theme");
+    var theme = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-theme", theme);
+  }catch(e){}
+})();
+</script>
 </head>
 <body>
 
@@ -381,6 +434,26 @@ function openModal(html){
 }
 function closeModal(){ $("modal-root").classList.remove("open"); $("modal-root").innerHTML = ""; }
 
+/* ---------------- theme (light/dark) ---------------- */
+function currentTheme(){ return document.documentElement.getAttribute("data-theme") || "dark"; }
+function toggleTheme(){
+  var next = currentTheme() === "light" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem("sv-theme", next); }catch(e){}
+  document.querySelectorAll(".theme-toggle").forEach(function(btn){
+    var el = btn.querySelector(".material-symbols-outlined");
+    if(!el) return;
+    btn.classList.remove("theme-spin");
+    void btn.offsetWidth;
+    btn.classList.add("theme-spin");
+    el.textContent = next === "light" ? "dark_mode" : "light_mode";
+  });
+}
+function themeToggleHtml(){
+  var icon = currentTheme() === "light" ? "dark_mode" : "light_mode";
+  return '<button class="tb-icon theme-toggle" title="Toggle theme" onclick="toggleTheme()"><span class="material-symbols-outlined">' + icon + '</span></button>';
+}
+
 /* ---------------- local (private, per-browser) storage ---------------- */
 function lsGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
 function lsSet(key, value){ try{ localStorage.setItem(key, value); }catch(e){} }
@@ -395,6 +468,14 @@ function lsSetJSON(key, obj){ lsSet(key, JSON.stringify(obj)); }
 // The session lives in an httpOnly cookie the browser sends automatically —
 // JS never touches the token itself. `credentials: 'include'` is what tells
 // fetch() to send/accept that cookie on cross-origin requests to API_BASE.
+// CSRF double-submit cookie — the backend sets a non-httpOnly `csrf_token`
+// cookie alongside the real session cookie; every state-changing request
+// echoes it back as a header so the backend can compare the two. Read
+// straight from document.cookie since it's deliberately readable.
+function csrfHeaders(){
+  var m = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/);
+  return m ? { "X-CSRF-Token": decodeURIComponent(m[1]) } : {};
+}
 function isLoggedIn(){ return !!(STATE.auth && STATE.auth.user); }
 async function checkAuth(){
   try{
@@ -411,7 +492,6 @@ async function ensureMe(){
   if(!me){
     me = {
       plan:"free",
-      investorName:"", investorEmail:"", investorFirm:"", investorApplied:false,
       createdAt: Date.now()
     };
     lsSetJSON("me", me);
@@ -479,7 +559,7 @@ async function submitLogin(){
   }
 }
 async function doLogout(){
-  try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include" }); }catch(e){}
+  try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include", headers: csrfHeaders() }); }catch(e){}
   clearAuth();
   showToast("Signed out.");
   window.location.hash = "#/";
@@ -492,7 +572,7 @@ async function saveProject(p){
   var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id), {
     method: "PUT",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: Object.assign({ "Content-Type": "application/json" }, csrfHeaders()),
     body: JSON.stringify(p)
   });
   if(!res.ok) throw new Error("Could not save project");
@@ -574,7 +654,7 @@ async function fetchRepoContext(owner, repo){
 /* ---------------- Coach API (proxied through the Python backend) ---------------- */
 async function callClaude(messages, system, maxTokens){
   var res = await fetch(API_BASE + "/api/coach", {
-    method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" },
+    method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
   if(res.status === 503){ throw new Error("NOT_CONFIGURED"); }
@@ -584,9 +664,38 @@ async function callClaude(messages, system, maxTokens){
 }
 function friendlyAiError(e){
   if(e && e.message === "NOT_CONFIGURED"){
-    return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add an Anthropic API key in backend/.env. This isn't something you can fix by retrying.";
+    return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add GEMINI_API_KEY or ANTHROPIC_API_KEY in backend/.env. This isn't something you can fix by retrying.";
   }
   return "Something went wrong reaching the AI. Try again in a moment.";
+}
+
+/* ---- business rating (structured scorecard from a 3-judge council, not just chat prose) ---- */
+async function rateProject(p, repoContext){
+  var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rate", {
+    method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+    body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoContext || null })
+  });
+  var data = await res.json();
+  if(!res.ok) throw new Error(data.detail || "Could not generate a rating");
+  return data;
+}
+
+/* ---- investor application + gated directory (real backend, not a localStorage flag) ---- */
+async function applyAsInvestor(name, firm){
+  var res = await fetch(API_BASE + "/api/investors/apply", {
+    method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+    body: JSON.stringify({ name: name, firm: firm || "" })
+  });
+  var data = await res.json();
+  if(!res.ok) throw new Error(data.detail || "Could not submit application");
+  return data;
+}
+async function myInvestorStatus(){
+  try{
+    var res = await fetch(API_BASE + "/api/investors/me", { credentials:"include" });
+    if(!res.ok) return { status:"none" };
+    return await res.json();
+  }catch(e){ return { status:"none" }; }
 }
 /* ============================================================
    ROUTER
@@ -657,6 +766,7 @@ function appShellHtml(routeName){
   return '<div id="topbar">' +
       '<div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a><div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
       '<div class="tb-right">' +
+        themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
         '<button class="tb-icon" title="Upgrade" onclick="nav(\'#/settings/billing\')"><span class="material-symbols-outlined">bolt</span></button>' +
         '<button class="tb-icon" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
@@ -696,6 +806,7 @@ async function renderLanding(root){
     '<div class="tb-title">SourceVenture</div>' +
     '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
     '<div style="display:flex;gap:10px;align-items:center;">' +
+      themeToggleHtml() +
       (isLoggedIn() ?
         '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
         '<button class="btn btn-ghost btn-sm" onclick="openAuthModal(\'login\')">Sign In</button><button class="btn btn-primary btn-sm" onclick="openAuthModal(\'signup\')">Get Started</button>'
@@ -928,6 +1039,7 @@ async function renderCoach(main, id){
       '</div>' +
       '<div class="coach-side">' +
         '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button></div>' +
+        '<div class="coach-side-block"><h4>Business rating</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
         '<div class="coach-side-block"><h4>Project context</h4><div class="metric-row"><span>Repo</span><span class="mval mono" style="font-size:11px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</span></div>' +
           '<div class="metric-row"><span>Stars</span><span class="mval">' + (p.stars!=null?p.stars:"—") + '</span></div>' +
           '<div class="metric-row"><span>Contributors</span><span class="mval">' + (p.contributors!=null?p.contributors:"—") + '</span></div>' +
@@ -943,6 +1055,7 @@ async function renderCoach(main, id){
     fetchRepoContext(p.owner, p.repo).then(function(ctx){ COACH.repoCtx = ctx; });
   }
 
+  loadAndRenderRating(p);
   renderCoachMessages();
   renderCapNote();
 
@@ -998,6 +1111,60 @@ function requestIdeaEvaluation(){
   if(!input) return;
   input.value = "Evaluate my startup idea — problem & market, differentiation, execution signal, biggest risk, next concrete step.";
   sendCoachMessage();
+}
+
+/* ---- business rating scorecard — a real 3-judge "council" (VC, technical
+   due-diligence, growth analyst) plus a chairman synthesis, not one
+   model's single opinion — see backend/main.py's run_council_rating.
+   Ratings live server-side (project_ratings table) so a background
+   auto-rerate (fires when you save real pitch changes, no button needed)
+   actually shows up here. ---- */
+function scoreColor(n){ return n>=70 ? "var(--primary)" : n>=45 ? "var(--tertiary)" : "var(--error)"; }
+function scoreBarHtml(label, val){
+  return '<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--on-surface-variant);margin-bottom:3px;"><span>' + label + '</span><span class="mono">' + val + '</span></div>' +
+    '<div style="height:5px;border-radius:20px;background:var(--surface-highest);overflow:hidden;"><div style="height:100%;width:' + val + '%;background:' + scoreColor(val) + ';border-radius:20px;transition:width .5s ease;"></div></div></div>';
+}
+function ratingBlockHtml(r, p){
+  if(!r){
+    return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Rate my business</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge council (VC, technical due-diligence, growth analyst) — separate from the free-text idea evaluation above.</p>';
+  }
+  var improvements = (r.improvements||[]).map(function(imp){ return '<li style="margin-bottom:4px;">' + escapeHtml(imp) + '</li>'; }).join("");
+  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">' +
+      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '</div>' +
+      '<div class="muted" style="font-size:11px;">overall / 100</div></div>' +
+    '<p class="muted mono" style="font-size:10px;margin-bottom:12px;">' + (r.judges||3) + '-judge council · median score</p>' +
+    scoreBarHtml("Problem &amp; market", r.scores.problem_market) +
+    scoreBarHtml("Differentiation", r.scores.differentiation) +
+    scoreBarHtml("Execution signal", r.scores.execution_signal) +
+    scoreBarHtml("Risk resilience", r.scores.risk_resilience) +
+    '<p style="font-size:12px;margin-top:10px;">' + escapeHtml(r.verdict||"") + '</p>' +
+    '<p class="muted" style="font-size:11px;margin-top:6px;"><strong>Risk:</strong> ' + escapeHtml(r.biggest_risk||"") + '</p>' +
+    (improvements ? '<p class="muted" style="font-size:11px;margin-top:8px;margin-bottom:2px;"><strong>What would raise this:</strong></p><ul class="muted" style="font-size:11px;padding-left:16px;">' + improvements + '</ul>' : '') +
+    '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:10px;" onclick="runRating(' + "'" + p.id + "'" + ')">Re-rate</button>';
+}
+async function loadAndRenderRating(p){
+  var block = $("rating-block");
+  if(!block) return;
+  try{
+    var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rating");
+    var data = await res.json();
+    block.innerHTML = ratingBlockHtml(data.rating, p);
+  }catch(e){
+    block.innerHTML = ratingBlockHtml(null, p);
+  }
+}
+async function runRating(id){
+  var block = $("rating-block");
+  if(!block) return;
+  block.innerHTML = '<div class="skel" style="height:70px;"></div><p class="muted" style="font-size:10px;margin-top:6px;">Asking 3 independent judges — takes a few seconds…</p>';
+  try{
+    if(!COACH.repoCtx && COACH.project){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
+    var repoText = COACH.repoCtx ? (COACH.repoCtx.readme || COACH.repoCtx.description || "") : "";
+    var data = await rateProject(COACH.project, repoText);
+    block.innerHTML = ratingBlockHtml(data, COACH.project);
+  }catch(e){
+    block.innerHTML = '<p class="muted" style="font-size:12px;">' + escapeHtml(e.message) + '</p><button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="runRating(' + "'" + id + "'" + ')">Try again</button>';
+  }
 }
 
 function coachSystemPrompt(p, ctx){
@@ -1137,6 +1304,10 @@ async function renderInvestors(main){
   var published = await loadAllPublishedProjects();
   var count = published.length;
   var open = count >= DIRECTORY_THRESHOLD;
+  // Real server-side status now (was STATE.me.investorApplied — a
+  // localStorage flag with zero backend enforcement). See
+  // backend/main.py's investor_applications table + /api/investors/* routes.
+  var invStatus = isLoggedIn() ? (await myInvestorStatus()).status : "none";
 
   main.innerHTML = '<div class="canvas-wide">' +
     '<div class="eyebrow">Investors</div><h1 class="page-title">Investor Directory</h1>' +
@@ -1148,8 +1319,10 @@ async function renderInvestors(main){
       '<p>' + (open ? "The initial cohort threshold has been reached. Approved investors can browse every published project below." : "The SourceVenture investor portal is highly curated. Access unlocks when the initial cohort reaches our threshold for market viability.") + '</p>' +
       '<div class="prog-wrap"><div class="prog-top"><span>Cohort Alpha Status</span><span class="now">' + count + ' / ' + DIRECTORY_THRESHOLD + ' Projects</span></div>' +
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (count/DIRECTORY_THRESHOLD)*100) + '%;"></div></div></div>' +
-      (STATE.me.investorApplied ?
-        '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application on file — you’ll get full access the moment the cohort fills.</div>' :
+      (invStatus === "approved" ?
+        '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application approved — full access below.</div>' :
+       invStatus === "pending" ?
+        '<div class="mono" style="font-size:11.5px;color:var(--on-surface-variant);">Application pending review — a real queue now, no auto-approval.</div>' :
         '<button class="btn btn-primary" onclick="openInvestorApplyModal()"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>' + (open ? "Apply for access" : "Notify me when access opens") + '</button>') +
     '</div>' +
 
@@ -1168,7 +1341,7 @@ async function renderInvestors(main){
     '<div id="dir-list"></div>' +
   '</div>';
 
-  renderDirList(published, open);
+  renderDirList(published, open, invStatus === "approved");
 }
 
 async function findInvestorMatches(){
@@ -1181,7 +1354,7 @@ async function findInvestorMatches(){
   results.innerHTML = '<div class="skel" style="height:80px;"></div>';
   try{
     var res = await fetch(API_BASE + "/api/investors/match", {
-      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      method:"POST", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()),
       body: JSON.stringify({
         interests: interests,
         minAmount: $("match-min").value ? Number($("match-min").value) : null,
@@ -1209,9 +1382,9 @@ async function findInvestorMatches(){
   btn.disabled = false; btn.textContent = "Find matches";
 }
 
-function renderDirList(published, open){
+function renderDirList(published, open, approved){
   var el = $("dir-list");
-  var canSeeReal = open && STATE.me.investorApplied;
+  var canSeeReal = open && approved;
 
   if(published.length === 0){
     el.innerHTML = '<div class="empty-state"><h3>Nothing published yet</h3><p>Be the first — publish a project to seed the directory.</p></div>';
@@ -1254,20 +1427,27 @@ function openDirSummary(id){
 }
 
 function openInvestorApplyModal(){
-  openModal('<h3>Apply for investor access</h3><p class="modal-sub">Approval is required even after the cohort threshold is met. In this preview, applications are approved instantly so you can see the unlocked view — production review is manual.</p>' +
+  if(!isLoggedIn()){ openAuthModal("login"); return; }
+  openModal('<h3>Apply for investor access</h3><p class="modal-sub">Approval is required even after the cohort threshold is met — this is a real, manually-reviewed queue, not an instant unlock.</p>' +
     '<div class="form-error" id="ia-error"></div>' +
     '<div class="field"><label>Name</label><input type="text" id="ia-name" /></div>' +
-    '<div class="field"><label>Work email</label><input type="email" id="ia-email" /></div>' +
     '<div class="field"><label>Firm</label><input type="text" id="ia-firm" /></div>' +
-    '<div class="modal-actions"><button class="btn btn-primary btn-block" onclick="submitInvestorApp()">Submit application</button></div>');
+    '<div class="modal-actions"><button class="btn btn-primary btn-block" id="ia-submit" onclick="submitInvestorApp()">Submit application</button></div>');
 }
 async function submitInvestorApp(){
-  var name = $("ia-name").value.trim(), email = $("ia-email").value.trim(), firm = $("ia-firm").value.trim();
-  if(!name || !email || !firm){ $("ia-error").textContent = "All three fields are required."; $("ia-error").classList.add("show"); return; }
-  await saveMe({ investorName:name, investorEmail:email, investorFirm:firm, investorApplied:true });
-  closeModal();
-  showToast("Application received (instant approval in this preview).");
-  router();
+  var name = $("ia-name").value.trim(), firm = $("ia-firm").value.trim();
+  var err = $("ia-error");
+  if(!name){ err.textContent = "Name is required."; err.classList.add("show"); return; }
+  var btn = $("ia-submit"); btn.disabled = true; btn.textContent = "Submitting…";
+  try{
+    await applyAsInvestor(name, firm);
+    closeModal();
+    showToast("Application submitted — you'll get access once it's reviewed and approved.");
+    router();
+  }catch(e){
+    err.textContent = e.message; err.classList.add("show");
+    btn.disabled = false; btn.textContent = "Submit application";
+  }
 }
 /* ============================================================
    SETTINGS
