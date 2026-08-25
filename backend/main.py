@@ -221,7 +221,7 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def user_public(row) -> dict:
-    return {"id": row[0], "email": row[1], "name": row[2]}
+    return {"id": row[0], "email": row[1], "name": row[2], "emailVerified": bool(row[3])}
 
 
 def set_session_cookie(response: Response, token: str):
@@ -302,7 +302,7 @@ def get_current_user(request: Request):
         if not row or row[1] < int(time.time()):
             raise HTTPException(status_code=401, detail="Session expired or invalid")
         user = conn.execute(
-            "SELECT id, email, name FROM users WHERE id = ?", (row[0],)
+            "SELECT id, email, name, email_verified FROM users WHERE id = ?", (row[0],)
         ).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
@@ -391,13 +391,34 @@ def verify_email(token: str):
         conn.close()
 
 
+@app.post("/api/auth/resend-verification")
+def resend_verification(request: Request, background_tasks: BackgroundTasks, current_user=Depends(get_current_user)):
+    # Session-gated rather than taking a raw email in the body — signup logs
+    # the user in immediately (see signup() above), so by the time this is
+    # reachable from the UI they already have a session. Keying the rate
+    # limit off user_id (not IP) means one impatient person mashing "resend"
+    # can't lock out everyone behind the same NAT/office IP.
+    check_rate_limit("resend-verification", current_user["id"], limit=3, window_seconds=600)
+    if current_user["emailVerified"]:
+        return {"ok": True, "alreadyVerified": True}
+    conn = get_db()
+    try:
+        verify_token = secrets.token_urlsafe(24)
+        conn.execute("UPDATE users SET verify_token = ? WHERE id = ?", (verify_token, current_user["id"]))
+        conn.commit()
+        background_tasks.add_task(send_verification_email, current_user["email"], current_user["name"], verify_token)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request, response: Response):
     check_rate_limit("login", client_ip(request), limit=10, window_seconds=600)
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id, email, name, password_hash FROM users WHERE email = ?", (req.email,)
+            "SELECT id, email, name, password_hash, email_verified FROM users WHERE email = ?", (req.email,)
         ).fetchone()
         if not row or not verify_password(req.password, row[3]):
             log.info("failed login attempt for email=%s", req.email)
@@ -406,7 +427,7 @@ def login(req: LoginRequest, request: Request, response: Response):
         conn.commit()
         set_session_cookie(response, token)
         log.info("login: user_id=%s", row[0])
-        return {"user": {"id": row[0], "email": row[1], "name": row[2]}}
+        return {"user": user_public((row[0], row[1], row[2], row[4]))}
     finally:
         conn.close()
 
