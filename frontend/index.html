@@ -20,17 +20,17 @@
   --outline:rgba(255,255,255,0.35);
   --outline-variant:rgba(255,255,255,0.06);
   --border:rgba(255,255,255,0.10);
-  --primary:#22b57e;
-  --primary-bright:#2fd695;
+  --primary:#4f8ff7;
+  --primary-bright:#6ba3fa;
   --on-primary:#ffffff;
-  --primary-container:#1c8f65;
+  --primary-container:#3d74d6;
   --on-primary-container:#ffffff;
-  --accent-glow:rgba(52,211,153,0.30);
+  --accent-glow:rgba(79,143,247,0.30);
   --secondary:#8A8F98;
   --tertiary:#A78BFA;
   --error:#ff6b6b;
-  --accent-green:#34d399;
-  --accent-green-dim:rgba(52,211,153,0.45);
+  --accent-green:#4f8ff7;
+  --accent-green-dim:rgba(79,143,247,0.45);
   --radius:0.5rem;
   --radius-lg:1rem;
   --radius-xl:1.25rem;
@@ -59,17 +59,17 @@
   --outline:rgba(19,21,43,0.35);
   --outline-variant:rgba(19,21,43,0.09);
   --border:rgba(19,21,43,0.14);
-  --primary:#0e9f6e;
-  --primary-bright:#0c8a5f;
+  --primary:#2563eb;
+  --primary-bright:#1d4ed8;
   --on-primary:#ffffff;
-  --primary-container:#0c8a5f;
+  --primary-container:#1d4ed8;
   --on-primary-container:#ffffff;
-  --accent-glow:rgba(52,211,153,0.16);
+  --accent-glow:rgba(79,143,247,0.16);
   --secondary:#5b5f7a;
   --tertiary:#7c5cff;
   --error:#d1453d;
-  --accent-green:#0e9f6e;
-  --accent-green-dim:rgba(14,159,110,0.30);
+  --accent-green:#2563eb;
+  --accent-green-dim:rgba(37,99,235,0.30);
 }
 *{box-sizing:border-box;}
 html{scroll-behavior:smooth;}
@@ -95,7 +95,7 @@ p{margin:0;}
 .bg-noise{position:absolute;inset:0;opacity:.02;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
 .bg-dots{position:absolute;inset:0;width:100%;height:100%;}
 .blob{position:absolute;border-radius:50%;will-change:transform;animation:blobFloat 9s var(--ease-out-expo) infinite;}
-.blob-1{top:-320px;left:50%;transform:translateX(-50%);width:1100px;height:1100px;background:radial-gradient(circle,rgba(52,211,153,.28) 0%,transparent 70%);filter:blur(90px);animation-duration:10s;}
+.blob-1{top:-320px;left:50%;transform:translateX(-50%);width:1100px;height:1100px;background:radial-gradient(circle,rgba(79,143,247,.28) 0%,transparent 70%);filter:blur(90px);animation-duration:10s;}
 .blob-2{top:120px;left:-260px;width:700px;height:700px;background:radial-gradient(circle,rgba(167,139,250,.16) 0%,transparent 70%);filter:blur(80px);animation-duration:12s;animation-delay:-3s;}
 .blob-3{top:280px;right:-220px;width:560px;height:560px;background:radial-gradient(circle,rgba(94,150,210,.13) 0%,transparent 70%);filter:blur(75px);animation-duration:11s;animation-delay:-6s;}
 @keyframes blobFloat{0%,100%{transform:translateY(0) rotate(0deg);}50%{transform:translateY(-24px) rotate(1deg);}}
@@ -108,8 +108,8 @@ p{margin:0;}
 
 .btn{font-weight:600;font-size:13.5px;border-radius:var(--radius);padding:10px 18px;border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo),box-shadow .2s var(--ease-out-expo),border-color .2s var(--ease-out-expo);white-space:nowrap;font-family:var(--font-mono);}
 .btn:active{transform:scale(.98);}
-.btn-primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary);box-shadow:0 0 0 1px rgba(52,211,153,.5),0 4px 12px rgba(52,211,153,.3),inset 0 1px 0 0 rgba(255,255,255,.2);}
-.btn-primary:hover{background:var(--primary-bright);box-shadow:0 0 0 1px rgba(52,211,153,.6),0 6px 24px rgba(52,211,153,.45),inset 0 1px 0 0 rgba(255,255,255,.25);transform:translateY(-1px);}
+.btn-primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary);box-shadow:0 0 0 1px rgba(79,143,247,.5),0 4px 12px rgba(79,143,247,.3),inset 0 1px 0 0 rgba(255,255,255,.2);}
+.btn-primary:hover{background:var(--primary-bright);box-shadow:0 0 0 1px rgba(79,143,247,.6),0 6px 24px rgba(79,143,247,.45),inset 0 1px 0 0 rgba(255,255,255,.25);transform:translateY(-1px);}
 .btn-ghost{background:var(--surface);color:var(--on-surface);border-color:var(--outline-variant);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.06);}
 .btn-ghost:hover{background:var(--surface-high);border-color:var(--border);transform:translateY(-1px);}
 .btn-danger{background:transparent;color:var(--error);border-color:rgba(255,107,107,.35);}
@@ -144,7 +144,7 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
 @media(max-width:900px){#sidenav{display:none;}}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
-.sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(52,211,153,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;flex:none;}
+.sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(79,143,247,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;flex:none;}
 .sn-head h1{font-size:16px;}
 .sn-head p{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);margin-top:1px;}
 .sn-newbtn{padding:14px;}
@@ -163,9 +163,9 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 
 .card{background:linear-gradient(to bottom,rgba(255,255,255,.06),rgba(255,255,255,.015));border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 0 0 1px rgba(255,255,255,.03),0 2px 20px rgba(0,0,0,.4),0 0 40px rgba(0,0,0,.15);position:relative;isolation:isolate;transition:border-color .25s var(--ease-out-expo),box-shadow .25s var(--ease-out-expo),transform .25s var(--ease-out-expo);}
 .card:hover{transform:translateY(-2px);}
-.card.spotlight::before{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(300px circle at var(--mx,50%) var(--my,50%),rgba(52,211,153,.15),transparent 70%);opacity:0;transition:opacity .3s var(--ease-out-expo);pointer-events:none;z-index:0;}
+.card.spotlight::before{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(300px circle at var(--mx,50%) var(--my,50%),rgba(79,143,247,.15),transparent 70%);opacity:0;transition:opacity .3s var(--ease-out-expo);pointer-events:none;z-index:0;}
 .card.spotlight:hover::before{opacity:1;}
-.card.spotlight:hover{border-color:var(--border);box-shadow:0 0 0 1px rgba(255,255,255,.06),0 8px 40px rgba(0,0,0,.5),0 0 80px rgba(52,211,153,.1);}
+.card.spotlight:hover{border-color:var(--border);box-shadow:0 0 0 1px rgba(255,255,255,.06),0 8px 40px rgba(0,0,0,.5),0 0 80px rgba(79,143,247,.1);}
 .card > *{position:relative;z-index:1;}
 .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--on-surface-variant);display:flex;align-items:center;gap:8px;}
 .page-title{font-family:var(--font-display);font-size:28px;margin:6px 0 6px;}
@@ -225,7 +225,7 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 @media(max-width:520px){.hero h1{font-size:36px;}}
 .hero .lead{font-size:16.5px;color:var(--on-surface-variant);max-width:480px;margin-bottom:28px;}
 .hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
-.code-panel{background:var(--surface-lowest);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.03),0 20px 60px rgba(0,0,0,.5),0 0 100px rgba(52,211,153,.08);}
+.code-panel{background:var(--surface-lowest);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.03),0 20px 60px rgba(0,0,0,.5),0 0 100px rgba(79,143,247,.08);}
 .code-panel .cp-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--outline-variant);font-family:var(--font-mono);font-size:11.5px;color:var(--on-surface-variant);}
 .code-panel .cp-bar .dots{display:flex;gap:6px;}
 .code-panel .cp-bar .dots span{width:8px;height:8px;border-radius:50%;background:var(--surface-highest);}
@@ -391,12 +391,13 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .toast.err{border-color:rgba(255,107,107,0.35);color:var(--error);}
 .skel{background:linear-gradient(90deg,var(--surface-low) 25%,var(--surface-high) 37%,var(--surface-low) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px;}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
-.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s var(--ease-out-expo),transform .6s var(--ease-out-expo);}
-.reveal.in{opacity:1;transform:translateY(0);}
+.reveal{opacity:0;transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
+.reveal.in{opacity:1;transform:translateY(0) scale(1);}
+.magnetic{transition:transform .25s var(--ease-out-expo);will-change:transform;}
 @media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none;}}
 
 /* ---------- help widget ---------- */
-#help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(52,211,153,.5),0 6px 24px rgba(52,211,153,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
+#help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(79,143,247,.5),0 6px 24px rgba(79,143,247,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
 #help-fab:active{transform:scale(.96);}
 #help-fab:hover{background:var(--primary-bright);}
 #help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
@@ -426,7 +427,6 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
   <div class="blob blob-2"></div>
   <div class="blob blob-3"></div>
   <canvas class="bg-dots" id="bg-dots"></canvas>
-  <div class="bg-grid"></div>
   <div class="bg-noise"></div>
 </div>
 
@@ -577,7 +577,7 @@ async function saveMe(patch){
 // #bg-fx layer render with identical parameters, so the whole app reads as
 // one consistent surface rather than "auth has an effect, the rest doesn't."
 // Zero new dependencies — this app is deliberately zero-build.
-var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.22, revealSpeed: 0.03, color: "52,211,153" };
+var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.22, revealSpeed: 0.03, color: "79,143,247" };
 function startDotCanvas(canvas, opts){
   opts = Object.assign({}, DOT_PRESET, opts || {});
   var cell = opts.cell, dot = opts.dot, maxAlpha = opts.maxAlpha, color = opts.color, revealSpeed = opts.revealSpeed;
@@ -604,11 +604,16 @@ function startDotCanvas(canvas, opts){
   function draw(now){
     var t = (now - start) / 1000;
     ctx.clearRect(0, 0, w, h);
-    var cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+    // Slow scroll-parallax: the grid drifts with scroll at a fraction of
+    // page speed (depth cue), wrapped by cell size so it tiles seamlessly
+    // forever instead of running out of drawn area.
+    var scrollOffset = (window.scrollY || 0) * 0.12;
+    var cols = Math.ceil(w / cell), rows = Math.ceil(h / cell) + 1;
     var cx = cols / 2, cy = rows / 2;
     for(var y = 0; y < rows; y++){
       for(var x = 0; x < cols; x++){
-        var px = x * cell + cell / 2, py = y * cell + cell / 2;
+        var px = x * cell + cell / 2;
+        var py = ((y * cell + cell / 2 + scrollOffset) % (rows * cell) + rows * cell) % (rows * cell);
         var d = Math.hypot(x - cx, y - cy);
         var seed = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
         seed -= Math.floor(seed);
@@ -624,9 +629,15 @@ function startDotCanvas(canvas, opts){
           r = dot + proximity * 2.2;
         }
         ctx.fillStyle = "rgba(" + color + "," + alpha.toFixed(3) + ")";
-        ctx.beginPath();
-        ctx.arc(px, py, r, 0, Math.PI * 2);
-        ctx.fill();
+        // Slightly rounded squares, not circles — reads as "pixels", not dots.
+        var s = r * 1.7;
+        if(ctx.roundRect){
+          ctx.beginPath();
+          ctx.roundRect(px - s / 2, py - s / 2, s, s, Math.max(1, s * 0.25));
+          ctx.fill();
+        } else {
+          ctx.fillRect(px - s / 2, py - s / 2, s, s);
+        }
       }
     }
     raf = requestAnimationFrame(draw);
@@ -665,7 +676,7 @@ function renderAuthPage(root, mode){
         (isSignup ? '<div class="auth-field"><input type="text" id="auth-name" placeholder="Your name" autocomplete="name" /></div>' : "") +
         '<div class="auth-field"><input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" /></div>' +
         '<div class="auth-field auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="' + (isSignup ? "new-password" : "current-password") + '" />' +
-          '<button type="submit" class="auth-go" id="auth-submit" aria-label="' + (isSignup ? "Create account" : "Sign in") + '"><span class="material-symbols-outlined">arrow_forward</span></button>' +
+          '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="' + (isSignup ? "Create account" : "Sign in") + '"><span class="material-symbols-outlined">arrow_forward</span></button>' +
         '</div>' +
       '</form>' +
       '<p class="auth-error" id="auth-error"></p>' +
@@ -1027,7 +1038,7 @@ async function renderLanding(root){
       themeToggleHtml() +
       (isLoggedIn() ?
         '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
-        '<button class="btn btn-ghost btn-sm" onclick="nav(\'#/signin\')">Sign In</button><button class="btn btn-primary btn-sm" onclick="nav(\'#/signup\')">Get Started</button>'
+        '<button class="btn btn-ghost btn-sm" onclick="nav(\'#/signin\')">Sign In</button><button class="btn btn-primary btn-sm magnetic" onclick="nav(\'#/signup\')">Get Started</button>'
       ) +
     '</div>' +
   '</div></nav>' +
@@ -1038,7 +1049,7 @@ async function renderLanding(root){
       '<h1>Think with something that understands the code.</h1>' +
       '<p class="lead">Publish your project, connect the real repository, and get a private AI coach grounded in your actual code and pitch — not a generic prompt. Investor access stays gated until the cohort is real.</p>' +
       '<div class="hero-actions">' +
-        '<button class="btn btn-primary" onclick="nav(\'#/new\')">Publish your project<span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></button>' +
+        '<button class="btn btn-primary magnetic" onclick="nav(\'#/new\')">Publish your project<span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></button>' +
         '<button class="btn btn-ghost" onclick="document.getElementById(\'how\').scrollIntoView()">See how it works</button>' +
       '</div>' +
       '<div class="mono muted" style="font-size:11.5px;">' + published.length + ' projects synced · coach powered by a private Python backend</div>' +
@@ -1829,6 +1840,31 @@ document.addEventListener("mousemove", function(e){
   var r = el.getBoundingClientRect();
   el.style.setProperty("--mx", (e.clientX - r.left) + "px");
   el.style.setProperty("--my", (e.clientY - r.top) + "px");
+});
+
+// Magnetic buttons: any .magnetic element nudges toward the cursor within a
+// small radius, springs back on leave. Delegated on document (like the
+// .spotlight handler above) so it works on buttons added by any route's
+// render function without a separate init/re-init step per navigation.
+document.addEventListener("mousemove", function(e){
+  document.querySelectorAll(".magnetic").forEach(function(el){
+    var r = el.getBoundingClientRect();
+    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    var dx = e.clientX - cx, dy = e.clientY - cy;
+    var dist = Math.hypot(dx, dy);
+    var radius = Math.max(r.width, r.height) * 1.6;
+    if(dist < radius){
+      var pull = (1 - dist / radius) * 0.2;
+      var tx = Math.max(-12, Math.min(12, dx * pull));
+      var ty = Math.max(-12, Math.min(12, dy * pull));
+      el.style.transform = "translate(" + tx + "px," + ty + "px)";
+    } else if(el.style.transform){
+      el.style.transform = "";
+    }
+  });
+});
+document.addEventListener("mouseleave", function(){
+  document.querySelectorAll(".magnetic").forEach(function(el){ el.style.transform = ""; });
 });
 
 // Scroll-reveal: fade+rise elements marked .reveal into place once, on entry.
