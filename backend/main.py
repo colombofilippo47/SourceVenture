@@ -38,6 +38,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -104,100 +105,132 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-def get_db():
+def init_db():
+    # Schema creation used to run inline in get_db(), i.e. on EVERY request —
+    # every signup, login, project fetch, coach message, etc. paid for 4x
+    # "CREATE TABLE IF NOT EXISTS" plus 2 probe "ALTER TABLE" statements
+    # (the latter relying on catching sqlite3.OperationalError since SQLite
+    # has no "ADD COLUMN IF NOT EXISTS") before doing any real work. None of
+    # that is conditional on anything changing between requests, so it now
+    # runs exactly once at process startup instead.
     conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE,
-            name TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            email_verified INTEGER NOT NULL DEFAULT 0,
-            verify_token TEXT
-        )"""
-    )
-    # SQLite has no "ADD COLUMN IF NOT EXISTS" — this only matters for a
-    # data.db created before email verification existed; a fresh DB already
-    # has both columns from the CREATE TABLE above and these no-op.
-    for stmt in ("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-                 "ALTER TABLE users ADD COLUMN verify_token TEXT"):
-        try:
-            conn.execute(stmt)
-        except sqlite3.OperationalError:
-            pass
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            expires_at INTEGER NOT NULL
-        )"""
-    )
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS projects (
-            id TEXT PRIMARY KEY,
-            owner_user_id TEXT,
-            status TEXT NOT NULL,
-            published_at INTEGER,
-            updated_at INTEGER NOT NULL,
-            data TEXT NOT NULL
-        )"""
-    )
-    # Investor browsing is gated behind BOTH a platform-wide published-project
-    # threshold AND per-investor approval. Neither existed server-side
-    # before this: GET /api/projects was fully public with zero gating, and
-    # "investorApplied" only ever lived in frontend localStorage —
-    # meaningless as access control, since nothing stopped a direct API
-    # call. This table + the endpoints below are the real, server-enforced
-    # version. No admin UI exists yet to approve applications — see
-    # README.md for the direct-DB-update path until one is built.
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS investor_applications (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL UNIQUE,
-            name TEXT NOT NULL,
-            firm TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at INTEGER NOT NULL,
-            decided_at INTEGER
-        )"""
-    )
-    # Server-side rating storage — was localStorage-only before, which
-    # meant an "automatic" background re-rate (see auto_rerate) would have
-    # nowhere real to land. One row per project, overwritten on every rate.
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS project_ratings (
-            project_id TEXT PRIMARY KEY,
-            overall INTEGER NOT NULL,
-            scores TEXT NOT NULL,
-            verdict TEXT,
-            biggest_risk TEXT,
-            improvements TEXT NOT NULL,
-            judges INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-        )"""
-    )
-    return conn
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                email_verified INTEGER NOT NULL DEFAULT 0,
+                verify_token TEXT
+            )"""
+        )
+        # SQLite has no "ADD COLUMN IF NOT EXISTS" — this only matters for a
+        # data.db created before email verification existed; a fresh DB
+        # already has both columns from the CREATE TABLE above and these
+        # no-op.
+        for stmt in ("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN verify_token TEXT"):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT,
+                status TEXT NOT NULL,
+                published_at INTEGER,
+                updated_at INTEGER NOT NULL,
+                data TEXT NOT NULL
+            )"""
+        )
+        # Investor browsing is gated behind BOTH a platform-wide published-
+        # project threshold AND per-investor approval. Neither existed
+        # server-side before this: GET /api/projects was fully public with
+        # zero gating, and "investorApplied" only ever lived in frontend
+        # localStorage — meaningless as access control, since nothing
+        # stopped a direct API call. This table + the endpoints below are
+        # the real, server-enforced version. No admin UI exists yet to
+        # approve applications — see README.md for the direct-DB-update
+        # path until one is built.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS investor_applications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                firm TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL,
+                decided_at INTEGER
+            )"""
+        )
+        # Server-side rating storage — was localStorage-only before, which
+        # meant an "automatic" background re-rate (see auto_rerate) would
+        # have nowhere real to land. One row per project, overwritten on
+        # every rate.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_ratings (
+                project_id TEXT PRIMARY KEY,
+                overall INTEGER NOT NULL,
+                scores TEXT NOT NULL,
+                verdict TEXT,
+                biggest_risk TEXT,
+                improvements TEXT NOT NULL,
+                judges INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )"""
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.on_event("startup")
+def _on_startup():
+    init_db()
+
+
+def get_db():
+    return sqlite3.connect(DB_PATH)
 
 
 # ------------------------------------------------------------- rate limiting
 # In-memory sliding-window limiter, keyed by (bucket, client ip). Good enough
 # for a single-process deployment; a real multi-instance deployment would
 # move this to Redis.
+#
+# Most routes above are sync `def` handlers, which Starlette runs in a
+# worker threadpool rather than on the single asyncio event loop — so two
+# requests from the same key CAN genuinely execute check_rate_limit at the
+# same wall-clock instant on different threads. Without a lock, the
+# check-then-append here isn't atomic: both threads can read the same
+# under-limit slot length before either appends, letting a burst slip past
+# the cap by a few requests. The lock makes each check+append atomic.
 _rate_limit_hits: dict = {}
+_rate_limit_lock = threading.Lock()
 
 
 def check_rate_limit(bucket: str, key: str, limit: int, window_seconds: int):
     now = time.time()
-    slot = _rate_limit_hits.setdefault((bucket, key), [])
-    cutoff = now - window_seconds
-    while slot and slot[0] < cutoff:
-        slot.pop(0)
-    if len(slot) >= limit:
-        log.warning("rate limit hit: bucket=%s key=%s limit=%s", bucket, key, limit)
-        raise HTTPException(status_code=429, detail="Too many attempts — try again later")
-    slot.append(now)
+    with _rate_limit_lock:
+        slot = _rate_limit_hits.setdefault((bucket, key), [])
+        cutoff = now - window_seconds
+        while slot and slot[0] < cutoff:
+            slot.pop(0)
+        if len(slot) >= limit:
+            log.warning("rate limit hit: bucket=%s key=%s limit=%s", bucket, key, limit)
+            raise HTTPException(status_code=429, detail="Too many attempts — try again later")
+        slot.append(now)
 
 
 def client_ip(request: Request) -> str:
@@ -284,7 +317,11 @@ class CoachMessage(BaseModel):
 
 
 class CoachRequest(BaseModel):
-    system: str
+    # Every other text field going into an LLM call in this file is bounded
+    # (CoachMessage.content, RateRequest.pitch/repoContext, etc.) — this one
+    # was not, so a caller could send an arbitrarily large `system` string
+    # and force a proportionally large, slow, and costly proxied call.
+    system: str = Field(max_length=20000)
     messages: List[CoachMessage]
     maxTokens: Optional[int] = 1200
 
@@ -599,7 +636,20 @@ def upsert_project(project_id: str, project: ProjectIn, background_tasks: Backgr
         # burn 3 LLM calls for a score that can't have moved.
         new_pitch = payload.get("pitch")
         if new_pitch and new_pitch != old_pitch:
-            background_tasks.add_task(auto_rerate, project_id, payload.get("name", ""), payload.get("tagline", ""), new_pitch)
+            # Shares the same "rate" bucket/limit as the manual rate button
+            # (check_rate_limit below, keyed by owner id) — previously this
+            # background path called run_council_rating() with NO rate check
+            # at all, so repeatedly saving small pitch edits could burn
+            # unlimited LLM calls against the free-tier cap. Silently skip
+            # the auto re-rate (never fail the save itself) once the owner's
+            # hourly quota is spent; they can still hit the manual button
+            # later, which will itself 429 until the window rolls over.
+            try:
+                check_rate_limit("rate", current_user["id"], limit=10, window_seconds=3600)
+            except HTTPException:
+                log.info("auto_rerate skipped for %s: rate limit exhausted for user %s", project_id, current_user["id"])
+            else:
+                background_tasks.add_task(auto_rerate, project_id, payload.get("name", ""), payload.get("tagline", ""), new_pitch)
         return payload
     finally:
         conn.close()
@@ -832,6 +882,21 @@ async def run_council_rating(req: RateRequest) -> dict:
 
 @app.post("/api/projects/{project_id}/rate")
 async def rate_project(project_id: str, req: RateRequest, current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    # Ownership check — without this, any signed-in user could POST to any
+    # OTHER project's id and overwrite its stored rating (project_ratings is
+    # keyed by project_id and upserted unconditionally), corrupting a
+    # rating that a visitor to that project's page would then see as if the
+    # real council had produced it. Only the project's own owner may
+    # trigger a rating for it, same rule as PUT /api/projects/{id}.
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if row[0] and row[0] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="You don't own this project")
     check_rate_limit("rate", current_user["id"], limit=10, window_seconds=3600)
     result = await run_council_rating(req)
     save_rating(project_id, result)
