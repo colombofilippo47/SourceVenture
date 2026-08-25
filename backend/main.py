@@ -121,7 +121,8 @@ def get_db():
     # data.db created before email verification existed; a fresh DB already
     # has both columns from the CREATE TABLE above and these no-op.
     for stmt in ("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-                 "ALTER TABLE users ADD COLUMN verify_token TEXT"):
+                 "ALTER TABLE users ADD COLUMN verify_token TEXT",
+                 "ALTER TABLE users ADD COLUMN avatar_data_url TEXT"):
         try:
             conn.execute(stmt)
         except sqlite3.OperationalError:
@@ -221,7 +222,14 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def user_public(row) -> dict:
-    return {"id": row[0], "email": row[1], "name": row[2], "emailVerified": bool(row[3])}
+    return {
+        "id": row[0], "email": row[1], "name": row[2], "emailVerified": bool(row[3]),
+        # Optional trailing column — most call sites' SELECTs don't fetch it
+        # (avatar isn't needed right after signup/login), only get_current_user
+        # does, so this stays a real avatar there and None everywhere else
+        # until the frontend's next /me refresh picks it up.
+        "avatarUrl": row[4] if len(row) > 4 else None,
+    }
 
 
 def set_session_cookie(response: Response, token: str):
@@ -302,7 +310,7 @@ def get_current_user(request: Request):
         if not row or row[1] < int(time.time()):
             raise HTTPException(status_code=401, detail="Session expired or invalid")
         user = conn.execute(
-            "SELECT id, email, name, email_verified FROM users WHERE id = ?", (row[0],)
+            "SELECT id, email, name, email_verified, avatar_data_url FROM users WHERE id = ?", (row[0],)
         ).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
@@ -449,6 +457,53 @@ def logout(request: Request, response: Response, _csrf=Depends(require_csrf)):
 @app.get("/api/auth/me")
 def me(current_user=Depends(get_current_user)):
     return current_user
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    avatarDataUrl: Optional[str] = None  # data:image/...;base64,... or "" to remove
+
+
+MAX_AVATAR_BYTES = 600_000  # ~600KB — a small profile photo, not a full-res upload
+
+
+@app.put("/api/auth/profile")
+def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), current_user=Depends(get_current_user)):
+    updates: list[str] = []
+    params: list = []
+
+    if req.name is not None:
+        name = req.name.strip()[:120]
+        if not name:
+            raise HTTPException(status_code=400, detail="Name can't be empty")
+        updates.append("name = ?")
+        params.append(name)
+
+    if req.avatarDataUrl is not None:
+        if req.avatarDataUrl == "":
+            updates.append("avatar_data_url = NULL")
+        else:
+            if not req.avatarDataUrl.startswith("data:image/"):
+                raise HTTPException(status_code=400, detail="Avatar must be an image")
+            if len(req.avatarDataUrl) > MAX_AVATAR_BYTES:
+                raise HTTPException(status_code=400, detail="Image too large — please use a smaller photo (under ~450KB)")
+            updates.append("avatar_data_url = ?")
+            params.append(req.avatarDataUrl)
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    conn = get_db()
+    try:
+        params.append(current_user["id"])
+        conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, email, name, email_verified, avatar_data_url FROM users WHERE id = ?", (current_user["id"],)
+        ).fetchone()
+        return {"user": user_public(row)}
+    finally:
+        conn.close()
 
 
 def _strip_investor_summary(payload: dict) -> dict:

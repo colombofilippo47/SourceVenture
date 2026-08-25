@@ -25,9 +25,9 @@
   --on-primary:#ffffff;
   --primary-container:#4e8267;
   --on-primary-container:#ffffff;
-  --accent-glow:rgba(92,148,120,0.16);
+  --accent-glow:rgba(92,148,120,0.11);
   --secondary:#8A8F98;
-  --tertiary:#A78BFA;
+  --tertiary:#c9a227;
   --error:#ff6b6b;
   --accent-green:#5c9478;
   --accent-green-dim:rgba(92,148,120,0.45);
@@ -64,9 +64,9 @@
   --on-primary:#ffffff;
   --primary-container:#356a4e;
   --on-primary-container:#ffffff;
-  --accent-glow:rgba(63,122,92,0.10);
+  --accent-glow:rgba(63,122,92,0.07);
   --secondary:#5b5f7a;
-  --tertiary:#7c5cff;
+  --tertiary:#a3821f;
   --error:#d1453d;
   --accent-green:#3f7a5c;
   --accent-green-dim:rgba(63,122,92,0.30);
@@ -126,7 +126,7 @@ p{margin:0;}
 #topbar .tb-left{display:flex;align-items:center;gap:14px;}
 #topbar .tb-title{font-family:var(--font-display);font-size:18px;font-weight:700;}
 #topbar .tb-divider{width:1px;height:16px;background:var(--outline-variant);}
-#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--tertiary);text-transform:uppercase;letter-spacing:.08em;}
+#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.08em;}
 #topbar .tb-right{display:flex;align-items:center;gap:6px;}
 #topbar .tb-icon{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);}
 #topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);transform:scale(1.08);}
@@ -145,9 +145,11 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
 @media(max-width:900px){#sidenav{display:none;}}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
-.sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;flex:none;}
-.sn-head h1{font-size:16px;}
-.sn-head p{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);margin-top:1px;}
+.sn-head-account{text-decoration:none;color:inherit;transition:background-color .2s var(--ease-out-expo);}
+.sn-head-account:hover{background:var(--surface-high);}
+.sn-head h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+.sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+.avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
 .sn-newbtn{padding:14px;}
 .sn-links{flex:1;padding:8px 0;overflow-y:auto;}
 .sn-links a{display:flex;align-items:center;gap:12px;padding:11px 20px;color:var(--on-surface-variant);font-size:14px;border-left:2px solid transparent;transition:color .15s,background .15s;}
@@ -159,7 +161,13 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 
 #main{flex:1;min-width:0;padding:48px;}
 @media(max-width:760px){#main{padding:24px 18px;}}
-.canvas{max-width:900px;margin:0 auto;}
+.canvas{max-width:900px;margin:0 auto;position:relative;}
+/* 2026-08-26, Denis: "behind every text and input... a bit of black/white
+   gradient depending on mode so the pixels dont interfere." A soft radial
+   scrim behind the whole content column — sits above #bg-fx (z-index 0)
+   since .canvas lives inside #root (z-index 1) — recedes the ambient dots
+   without fully hiding them or needing a scrim on every single element. */
+.canvas::before{content:"";position:absolute;inset:-24px -40px;z-index:-1;background:radial-gradient(ellipse 70% 60% at 50% 30%,var(--bg) 0%,transparent 100%);opacity:.88;pointer-events:none;}
 .canvas-wide{max-width:1100px;margin:0 auto;}
 
 .card{background:linear-gradient(to bottom,rgba(255,255,255,.07),rgba(255,255,255,.015));backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border:1px solid rgba(255,255,255,.09);border-radius:var(--radius-lg);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.12),0 2px 20px rgba(0,0,0,.4),0 0 40px rgba(0,0,0,.15);position:relative;isolation:isolate;transition:border-color .25s var(--ease-out-expo),box-shadow .25s var(--ease-out-expo),transform .25s var(--ease-out-expo);}
@@ -239,9 +247,16 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .code-panel{background:var(--surface-lowest);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.03),0 20px 60px rgba(0,0,0,.5),0 0 100px rgba(92,148,120,.08);}
 .code-panel .cp-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--outline-variant);font-family:var(--font-mono);font-size:11.5px;color:var(--on-surface-variant);position:relative;}
 .code-panel .cp-bar .dots{display:flex;gap:6px;}
-.code-panel .cp-bar .dots span{width:8px;height:8px;border-radius:50%;background:var(--surface-highest);}
-.cp-close{margin-left:auto;width:20px;height:20px;border-radius:50%;border:none;background:transparent;color:var(--on-surface-variant);font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background-color .2s var(--ease-out-expo),color .2s var(--ease-out-expo);}
-.cp-close:hover{background:var(--surface-high);color:var(--on-surface);}
+.code-panel .cp-bar .dots span{width:8px;height:8px;border-radius:50%;background:var(--surface-highest);display:flex;align-items:center;justify-content:center;}
+/* Real macOS-style traffic lights — red is the actual close control (the
+   ask: "when i said click out of the apple ui... i meant the 3 buttons on
+   the left, like it actually is in apple"), yellow/green stay decorative
+   like the real thing's minimize/zoom mostly are for a demo panel. */
+.dot-red{background:#ff5f57;cursor:pointer;}
+.dot-yellow{background:#febc2e;}
+.dot-green{background:#28c840;}
+.dot-glyph{opacity:0;font-size:7px;line-height:1;color:#4d0000;transition:opacity .15s ease;}
+.code-panel .cp-bar .dots:hover .dot-glyph{opacity:1;}
 @keyframes panelBobIn{from{opacity:0;transform:translateX(70px);}to{opacity:1;transform:translateX(0);}}
 @keyframes panelBobOut{to{opacity:0;transform:translateX(-40px);}}
 .code-panel.cp-entering{animation:panelBobIn .6s cubic-bezier(.34,1.56,.64,1) both;}
@@ -491,6 +506,21 @@ let STATE = { me:null, auth:null };
 
 function $(id){ return document.getElementById(id); }
 function nav(hash){ window.location.hash = hash; }
+// Real uploaded photo (base64 data URL, backend/main.py's avatar_data_url)
+// or an initials-in-gradient-circle fallback — never a fake stock avatar.
+function avatarInitials(name){
+  var parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return "?";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+function avatarHtml(user, size){
+  size = size || 40;
+  var style = "width:" + size + "px;height:" + size + "px;font-size:" + Math.round(size * 0.4) + "px;";
+  if(user && user.avatarUrl){
+    return '<img class="avatar-circle" style="' + style + '" src="' + escapeHtml(user.avatarUrl) + '" alt="" />';
+  }
+  return '<div class="avatar-circle" style="' + style + '">' + escapeHtml(avatarInitials(user && user.name)) + '</div>';
+}
 function escapeHtml(s){
   return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
@@ -517,8 +547,10 @@ var HERO_SNIPPETS = [
 var heroSnippetIndex = 0;
 function heroPanelInner(i){
   var s = HERO_SNIPPETS[i % HERO_SNIPPETS.length];
-  return '<div class="cp-bar"><div class="dots"><span></span><span></span><span></span></div>' + s.file +
-      '<button class="cp-close" onclick="cycleHeroPanel()" aria-label="Next snippet" title="Next">&times;</button></div>' +
+  return '<div class="cp-bar"><div class="dots">' +
+      '<span class="dot-red" onclick="cycleHeroPanel()" role="button" aria-label="Close" title="Close"><span class="dot-glyph">&times;</span></span>' +
+      '<span class="dot-yellow"></span><span class="dot-green"></span>' +
+    '</div>' + s.file + '</div>' +
     '<pre>' + s.code + '</pre>';
 }
 function cycleHeroPanel(){
@@ -649,7 +681,7 @@ async function saveMe(patch){
 // #bg-fx layer render with identical parameters, so the whole app reads as
 // one consistent surface rather than "auth has an effect, the rest doesn't."
 // Zero new dependencies — this app is deliberately zero-build.
-var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.22, revealSpeed: 0.03, color: "92,148,120" };
+var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.16, revealSpeed: 0.03, color: "92,148,120" };
 function startDotCanvas(canvas, opts){
   opts = Object.assign({}, DOT_PRESET, opts || {});
   var cell = opts.cell, dot = opts.dot, maxAlpha = opts.maxAlpha, color = opts.color, revealSpeed = opts.revealSpeed;
@@ -1133,13 +1165,13 @@ function appShellHtml(routeName){
       '<div class="tb-right">' +
         themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
-        '<button class="tb-icon" title="Upgrade" onclick="nav(\'#/settings/billing\')"><span class="material-symbols-outlined">bolt</span></button>' +
         '<button class="tb-icon" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
       '</div>' +
     '</div>' +
     '<div class="app-layout">' +
       '<nav id="sidenav">' +
-        '<div class="sn-head"><div class="sn-logo">SV</div><div><h1>SourceVenture</h1><p class="mono">Venture Engineering</p></div></div>' +
+        '<a href="#/settings" class="sn-head sn-head-account">' + avatarHtml(STATE.auth && STATE.auth.user, 40) +
+          '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") + '</h1><p class="mono">' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.email) || "") + '</p></div></a>' +
         '<div class="sn-newbtn"><button class="btn btn-primary btn-block" onclick="nav(\'#/new\')"><span class="material-symbols-outlined" style="font-size:16px;">add</span>New Project</button></div>' +
         '<div class="sn-links">' +
           '<a data-r="dashboard" href="#/dashboard"><span class="material-symbols-outlined">dashboard</span>Overview</a>' +
@@ -1208,7 +1240,7 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="pricing-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free to start. One paid tier.</h2><p>25 coach messages per rolling 24h on the free tier, disclosed and enforced. Founder Pro removes the cap for $15/month.</p></div>' +
+    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>25 coach messages per rolling 24h, disclosed and enforced — no paid tier, no hidden ceiling.</p></div>' +
     '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
@@ -1232,7 +1264,6 @@ async function renderDashboard(main){
     '<div class="stat-row">' +
       '<div class="card stat-card"><div class="lbl">Published</div><div class="val">' + published.length + '</div></div>' +
       '<div class="card stat-card"><div class="lbl">Drafts</div><div class="val">' + drafts.length + '</div></div>' +
-      '<div class="card stat-card"><div class="lbl">Plan</div><div class="val" style="font-size:18px;">' + (STATE.me.plan === "pro" ? "Founder Pro" : "Free") + '</div></div>' +
     '</div>' +
     (mine.length === 0 ?
       '<div class="empty-state"><h3>No projects yet</h3><p>Publish your first project to unlock the AI coach and investor visibility.</p><button class="btn btn-primary" style="margin-top:16px;" onclick="nav(\'#/new\')">New Project</button></div>' :
@@ -1411,7 +1442,7 @@ async function renderCoach(main, id){
           '<div class="metric-row"><span>Language</span><span class="mval">' + (p.language||"—") + '</span></div>' +
         '</div>' +
         '<div class="coach-side-block"><h4>Investor summary</h4><p class="muted" style="font-size:12px;margin-bottom:10px;">' + (p.investorSummary ? "Published to investors." : "Not generated yet.") + '</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/summary/' + p.id + '\')">Open workspace</button></div>' +
-        '<div class="coach-side-block"><h4>Plan</h4><p class="muted" style="font-size:12px;">' + (STATE.me.plan === "pro" ? "Founder Pro — unlimited." : DAILY_CAP + " messages / 24h free.") + '</p>' + (STATE.me.plan !== "pro" ? '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="nav(\'#/settings/billing\')">Upgrade</button>' : "") + '</div>' +
+        '<div class="coach-side-block"><h4>Message cap</h4><p class="muted" style="font-size:12px;">' + DAILY_CAP + ' messages / rolling 24h.</p></div>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -1452,17 +1483,12 @@ function activeUsageCount(){
 function renderCapNote(){
   var note = $("coach-cap");
   if(!note) return;
-  if(STATE.me.plan === "pro"){
-    note.textContent = "Founder Pro — unlimited coaching.";
-    $("coach-send").disabled = false;
-    return;
-  }
   var used = activeUsageCount();
   var remaining = Math.max(0, DAILY_CAP - used);
   if(remaining === 0){
     var oldest = Math.min.apply(null, COACH.usage);
     var resetsAt = new Date(oldest + 24*60*60*1000);
-    note.textContent = "Free daily cap reached (" + DAILY_CAP + "/" + DAILY_CAP + "). Resets " + resetsAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + " — or upgrade to Founder Pro.";
+    note.textContent = "Daily cap reached (" + DAILY_CAP + "/" + DAILY_CAP + "). Resets " + resetsAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + ".";
     $("coach-send").disabled = true;
   } else {
     note.textContent = remaining + " of " + DAILY_CAP + " coach messages left today (free tier).";
@@ -1556,18 +1582,16 @@ async function sendCoachMessage(){
   var input = $("coach-input");
   var text = input.value.trim();
   if(!text) return;
-  if(STATE.me.plan !== "pro" && activeUsageCount() >= DAILY_CAP){
-    showToast("Daily free cap reached — upgrade for unlimited coaching.");
+  if(activeUsageCount() >= DAILY_CAP){
+    showToast("Daily cap reached — try again after it resets.");
     return;
   }
   input.value = "";
   appendCoachMsg("user", text);
 
-  if(STATE.me.plan !== "pro"){
-    COACH.usage.push(Date.now());
-    saveUsage(COACH.project.id, COACH.usage);
-    renderCapNote();
-  }
+  COACH.usage.push(Date.now());
+  saveUsage(COACH.project.id, COACH.usage);
+  renderCapNote();
 
   var scroll = $("coach-scroll");
   var typingEl = document.createElement("div");
@@ -1817,13 +1841,13 @@ async function submitInvestorApp(){
 /* ============================================================
    SETTINGS
    ============================================================ */
-const SETTINGS_TABS = [["account","Account"],["security","Security"],["billing","Billing"],["privacy","Privacy"]];
+const SETTINGS_TABS = [["account","Account"],["security","Security"],["privacy","Privacy"]];
 
 async function renderSettings(main, tab){
   await ensureMe();
   main.innerHTML = '<div class="canvas">' +
-    '<div class="eyebrow">Settings</div><h1 class="page-title">' + (tab==="billing"?"Billing & Subscription":SETTINGS_TABS.filter(function(t){return t[0]===tab;}).map(function(t){return t[1];})[0]||"Settings") + '</h1>' +
-    (tab==="billing" ? '<p class="page-sub stack-lg">Manage your Founder Pro subscription, payment method and billing history.</p>' : '<p class="page-sub stack-lg">Manage your account, security and privacy on SourceVenture.</p>') +
+    '<div class="eyebrow">Settings</div><h1 class="page-title">' + (SETTINGS_TABS.filter(function(t){return t[0]===tab;}).map(function(t){return t[1];})[0]||"Settings") + '</h1>' +
+    '<p class="page-sub stack-lg">Manage your account, security and privacy on SourceVenture.</p>' +
     '<div class="settings-tabs">' + SETTINGS_TABS.map(function(t){ return '<div class="settings-tab' + (t[0]===tab?" active":"") + '" onclick="nav(\'#/settings/' + t[0] + '\')">' + t[1] + '</div>'; }).join("") + '</div>' +
     '<div id="settings-content"></div>' +
   '</div>';
@@ -1831,17 +1855,69 @@ async function renderSettings(main, tab){
   var el = $("settings-content");
   if(tab === "account") renderAccountTab(el);
   else if(tab === "security") renderSecurityTab(el);
-  else if(tab === "billing") renderBillingTab(el);
   else if(tab === "privacy") renderPrivacyTab(el);
   else renderAccountTab(el);
 }
 
 function renderAccountTab(el){
+  var u = STATE.auth.user;
   el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;">' +
-    '<div class="field"><label>Name</label><input type="text" value="' + escapeHtml(STATE.auth.user.name) + '" disabled /></div>' +
-    '<div class="field"><label>Email</label><input type="email" value="' + escapeHtml(STATE.auth.user.email) + '" disabled /></div>' +
-    '<p class="muted" style="font-size:12px;">Set at signup — editing profile fields isn\'t supported in this preview.</p>' +
+    '<div style="display:flex;align-items:center;gap:16px;margin-bottom:22px;">' +
+      '<div id="avatar-preview">' + avatarHtml(u, 64) + '</div>' +
+      '<div>' +
+        '<input type="file" id="avatar-file" accept="image/*" style="display:none;" onchange="handleAvatarPick(event)" />' +
+        '<button class="btn btn-ghost btn-sm" onclick="$(\'avatar-file\').click();">Change photo</button>' +
+        (u.avatarUrl ? '<button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="removeAvatar()">Remove</button>' : "") +
+        '<p class="muted" style="font-size:11px;margin-top:6px;">JPG or PNG, under ~450KB.</p>' +
+      '</div>' +
+    '</div>' +
+    '<div class="field"><label>Name</label><input type="text" id="account-name" value="' + escapeHtml(u.name) + '" /></div>' +
+    '<div class="field"><label>Email</label><input type="email" value="' + escapeHtml(u.email) + '" disabled /></div>' +
+    '<p class="muted" style="font-size:11px;margin-bottom:12px;">Email is set at signup and can\'t be changed here yet.</p>' +
+    '<p class="auth-error" id="account-error"></p>' +
+    '<button class="btn btn-primary btn-sm" onclick="saveAccountName()">Save name</button>' +
   '</div>';
+}
+async function saveAccountName(){
+  var name = $("account-name").value.trim();
+  var err = $("account-error");
+  if(!name){ err.textContent = "Name can't be empty."; return; }
+  err.textContent = "";
+  try{
+    var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ name: name }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't save");
+    setAuth(data.user);
+    showToast("Name updated.");
+    router();
+  }catch(e){ err.textContent = e.message; }
+}
+function handleAvatarPick(ev){
+  var file = ev.target.files && ev.target.files[0];
+  if(!file) return;
+  if(file.size > 450 * 1024){ showToast("That image is too large — under ~450KB please.", true); ev.target.value = ""; return; }
+  var reader = new FileReader();
+  reader.onload = async function(){
+    try{
+      var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ avatarDataUrl: reader.result }) });
+      var data = await res.json();
+      if(!res.ok) throw new Error(data.detail || "Couldn't upload");
+      setAuth(data.user);
+      showToast("Photo updated.");
+      router();
+    }catch(e){ showToast(e.message, true); }
+  };
+  reader.readAsDataURL(file);
+}
+async function removeAvatar(){
+  try{
+    var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ avatarDataUrl: "" }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't remove");
+    setAuth(data.user);
+    showToast("Photo removed.");
+    router();
+  }catch(e){ showToast(e.message, true); }
 }
 function renderSecurityTab(el){
   el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;"><p class="muted" style="font-size:13.5px;margin-bottom:16px;">Signed in as ' + escapeHtml(STATE.auth.user.email) + '. Your password is stored hashed on the backend and never sent back to the browser.</p>' +
@@ -1862,47 +1938,14 @@ function renderPrivacyTab(el){
   el.innerHTML = '<div class="card" style="padding:24px;max-width:520px;"><p class="muted" style="font-size:13.5px;line-height:1.6;">Published projects and any investor summary you approve are stored on this SourceVenture backend and visible to everyone using this deployment. Drafts, coach chats and usage counters stay private to your browser. Repository data is fetched from GitHub’s public API; coach conversations are sent to your own Python backend, which forwards them to the Claude API using a key you control.</p></div>';
 }
 
-function renderBillingTab(el){
-  var isPro = STATE.me.plan === "pro";
-  el.innerHTML = '<div class="card plan-card stack-lg">' +
-      '<div><h2 style="font-size:19px;">' + (isPro ? "Founder Pro" : "Free") + '</h2><p class="mono muted" style="margin-top:4px;">' + (isPro ? "$15.00 / month" : "$0.00 / month") + '</p>' +
-        '<div class="plan-features">' +
-          planFeature("Repo-grounded AI coach") + planFeature(isPro ? "Unlimited coaching" : DAILY_CAP + " messages / 24h") +
-          planFeature("Investor summary generation") + planFeature("Gated investor directory listing") +
-        '</div></div>' +
-      (isPro ? '<button class="btn btn-ghost btn-sm" onclick="downgradePlan()">Cancel plan</button>' : '<button class="btn btn-primary btn-sm" onclick="upgradePlan()">Upgrade — $15/mo</button>') +
-    '</div>' +
-    '<div class="card" style="padding:0;overflow:hidden;">' +
-      '<div style="padding:16px 18px;border-bottom:1px solid var(--outline-variant);"><h3 style="font-size:14px;">Payment method</h3></div>' +
-      '<div style="padding:16px 18px;">' + (isPro ? '<p class="mono" style="font-size:13px;">•••• •••• •••• 4242 (demo)</p>' : '<p class="muted" style="font-size:13px;">No payment method on file — this preview never asks for one.</p>') + '</div>' +
-    '</div>' +
-    (isPro ? '<div class="card" style="padding:0;overflow:hidden;margin-top:16px;"><div style="padding:16px 18px;border-bottom:1px solid var(--outline-variant);"><h3 style="font-size:14px;">Billing history</h3></div>' +
-      '<div class="invoice-row"><span>Invoice #DEMO-0002</span><span class="mono">$15.00</span></div>' +
-      '<div class="invoice-row"><span>Invoice #DEMO-0001</span><span class="mono">$15.00</span></div></div>' : "") +
-    '<p class="muted" style="font-size:11.5px;margin-top:14px;">This preview never charges a card. Upgrading here only toggles the plan flag so you can see the unlimited-coach experience.</p>';
-}
-function planFeature(text){
-  return '<div class="pf"><span class="material-symbols-outlined">check_circle</span>' + escapeHtml(text) + '</div>';
-}
-async function upgradePlan(){
-  await saveMe({ plan:"pro" });
-  showToast("Founder Pro active (preview only — no real charge).");
-  renderSettings($("main"), "billing");
-}
-async function downgradePlan(){
-  await saveMe({ plan:"free" });
-  showToast("Back to Free.");
-  renderSettings($("main"), "billing");
-}
-
 /* ============================================================
    SUPPORT CHATBOT (site-wide help, separate from the per-project coach)
    ============================================================ */
 let HELP_CHAT = { messages: [], open: false };
 
 function helpSystemPrompt(){
-  return "You are the SourceVenture Help Assistant — a short, friendly guide to using this specific site. This is a general support chat, not the per-project coach. Answer questions about how the product works and, whenever relevant, tell the user exactly which page to go to using this exact link text so it's clear: Dashboard (#/dashboard), New Project (#/new), Projects (#/projects), a project's AI Coach (#/coach/<id>), Investor Directory (#/investors), Settings → Billing (#/settings/billing), Settings → Security (#/settings/security). " +
-    "What this site does: founders publish a project (pitch + public GitHub repo) for free, then get a private AI coach that reads the real repo and can evaluate the startup idea (problem/market, differentiation, execution signal, risk, next step). Founders can generate an investor-facing summary and choose to publish it into a gated directory that opens once enough projects exist. Investors apply for access and browse published summaries. Accounts are free email/password signup; there is a paid 'Founder Pro' tier that removes the daily coach message cap. " +
+  return "You are the SourceVenture Help Assistant — a short, friendly guide to using this specific site. This is a general support chat, not the per-project coach. Answer questions about how the product works and, whenever relevant, tell the user exactly which page to go to using this exact link text so it's clear: Dashboard (#/dashboard), New Project (#/new), Projects (#/projects), a project's AI Coach (#/coach/<id>), Investor Directory (#/investors), Settings → Security (#/settings/security). " +
+    "What this site does: founders publish a project (pitch + public GitHub repo) for free, then get a private AI coach that reads the real repo and can evaluate the startup idea (problem/market, differentiation, execution signal, risk, next step). Founders can generate an investor-facing summary and choose to publish it into a gated directory that opens once enough projects exist. Investors apply for access and browse published summaries. Accounts are free email/password signup; the whole product is free, capped at " + DAILY_CAP + " coach messages per rolling 24h, no paid tier. " +
     "Keep answers to 2-4 sentences unless the user asks for more detail. If you don't know something about the user's specific account or data, say so plainly instead of guessing.";
 }
 function loadHelpChat(){ HELP_CHAT.messages = lsGetJSON("helpChat", []); }
