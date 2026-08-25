@@ -93,6 +93,7 @@ p{margin:0;}
 :root[data-theme="light"] .bg-noise{opacity:.012;}
 .bg-grid{position:absolute;inset:0;height:900px;opacity:.025;background-image:linear-gradient(rgba(255,255,255,.6) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.6) 1px,transparent 1px);background-size:64px 64px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent);mask-image:linear-gradient(to bottom,#000,transparent);}
 .bg-noise{position:absolute;inset:0;opacity:.02;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.bg-dots{position:absolute;inset:0;width:100%;height:100%;}
 .blob{position:absolute;border-radius:50%;will-change:transform;animation:blobFloat 9s var(--ease-out-expo) infinite;}
 .blob-1{top:-320px;left:50%;transform:translateX(-50%);width:1100px;height:1100px;background:radial-gradient(circle,rgba(94,106,210,.28) 0%,transparent 70%);filter:blur(90px);animation-duration:10s;}
 .blob-2{top:120px;left:-260px;width:700px;height:700px;background:radial-gradient(circle,rgba(167,139,250,.16) 0%,transparent 70%);filter:blur(80px);animation-duration:12s;animation-delay:-3s;}
@@ -349,6 +350,7 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .auth-field input{width:100%;background:rgba(255,255,255,.04);backdrop-filter:blur(2px);border:1px solid rgba(255,255,255,.10);color:#fff;border-radius:999px;padding:13px 18px;font-size:14px;text-align:center;transition:border-color .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
 .auth-field input::placeholder{color:rgba(255,255,255,.35);}
 .auth-field input:focus{outline:none;border-color:var(--accent-green-dim);background:rgba(255,255,255,.07);}
+.auth-field input:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
 :root[data-theme="light"] .auth-field input{background:rgba(19,21,43,.03);border-color:rgba(19,21,43,.12);color:#13152b;}
 :root[data-theme="light"] .auth-field input::placeholder{color:rgba(19,21,43,.35);}
 :root[data-theme="light"] .auth-field input:focus{background:rgba(19,21,43,.05);}
@@ -356,6 +358,7 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .auth-submit-row .auth-field{margin-bottom:0;}
 .auth-submit-row .auth-field input{padding-right:54px;}
 .auth-go{position:absolute;right:5px;top:5px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.10);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;transition:background-color .2s var(--ease-out-expo);}
+.auth-go:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
 .auth-go:hover{background:var(--accent-green);color:#04150e;}
 .auth-go[disabled]{opacity:.5;cursor:not-allowed;}
 :root[data-theme="light"] .auth-go{background:rgba(19,21,43,.08);color:#13152b;}
@@ -418,6 +421,7 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
   <div class="blob blob-1"></div>
   <div class="blob blob-2"></div>
   <div class="blob blob-3"></div>
+  <canvas class="bg-dots" id="bg-dots"></canvas>
   <div class="bg-grid"></div>
   <div class="bg-noise"></div>
 </div>
@@ -561,17 +565,22 @@ async function saveMe(patch){
   lsSetJSON("me", STATE.me);
 }
 
-/* ---------------- auth page (full-screen signin/signup/verify) ---------------- */
-// Ambient dot-reveal canvas — a hand-rolled 2D-canvas stand-in for
-// the WebGL/three.js shader background this design is based on. Same
-// visual idea (dots fade in outward from center, then idle-flicker) at a
-// fraction of the cost and with zero new dependencies, which matters here
-// since the rest of this app is a deliberately zero-build static page.
-var __authCanvasStop = null;
-function startAuthCanvas(canvas){
+/* ---------------- ambient dot-reveal canvas (sitewide + auth pages) ---------------- */
+// A hand-rolled 2D-canvas stand-in for the WebGL/three.js shader background
+// the sign-in design was originally built around (dots fade in outward
+// from center, then idle-flicker). Same visual idea at a fraction of the
+// cost and zero new dependencies — this app is deliberately zero-build.
+// One function, two intensities: a near-invisible sitewide layer mounted
+// once in #bg-fx (present on every route, alongside the existing
+// blob/grid/noise layers) for a consistent identity across the whole app,
+// and a bolder standalone instance on the auth pages as the hero moment.
+function startDotCanvas(canvas, opts){
+  opts = opts || {};
+  var cell = opts.cell || 26, dot = opts.dot || 2.2, maxAlpha = opts.maxAlpha != null ? opts.maxAlpha : 0.45;
+  var color = opts.color || "52,211,153", revealSpeed = opts.revealSpeed != null ? opts.revealSpeed : 0.045;
   var ctx = canvas.getContext("2d");
   var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-  var cell = 26, dot = 2.2, start = performance.now();
+  var start = performance.now();
   var raf, w, h;
   function resize(){
     w = canvas.clientWidth; h = canvas.clientHeight;
@@ -590,11 +599,11 @@ function startAuthCanvas(canvas){
         var d = Math.hypot(x - cx, y - cy);
         var seed = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
         seed -= Math.floor(seed);
-        var age = t - (d * 0.045 + seed * 1.3);
+        var age = t - (d * revealSpeed + seed * 1.3);
         if(age <= 0) continue;
         var flicker = 0.55 + 0.45 * Math.sin(t * 0.5 + seed * 10);
-        var alpha = Math.min(1, age * 2) * flicker * 0.45;
-        ctx.fillStyle = "rgba(52,211,153," + alpha.toFixed(3) + ")";
+        var alpha = Math.min(1, age * 2) * flicker * maxAlpha;
+        ctx.fillStyle = "rgba(" + color + "," + alpha.toFixed(3) + ")";
         ctx.beginPath();
         ctx.arc(x * cell + cell / 2, y * cell + cell / 2, dot, 0, Math.PI * 2);
         ctx.fill();
@@ -605,7 +614,15 @@ function startAuthCanvas(canvas){
   raf = requestAnimationFrame(draw);
   return function stop(){ cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
 }
+// Sitewide layer: started once at boot (see bottom of file), never stopped —
+// #bg-fx persists across every route in this SPA, so there's no per-route
+// mount/unmount to manage. Big cells, low cap: present but never distracting.
+function startSitewideDots(){
+  var c = $("bg-dots");
+  if(c) startDotCanvas(c, { cell:46, dot:1.6, maxAlpha:0.16, revealSpeed:0.02 });
+}
 
+var __authCanvasStop = null;
 function authTopHtml(){
   return '<div class="auth-top"><a href="#/" class="auth-brand">SourceVenture</a>' + themeToggleHtml() + '</div>';
 }
@@ -630,7 +647,7 @@ function renderAuthPage(root, mode){
         '<a href="#" onclick="event.preventDefault();nav(\'' + (isSignup ? "#/signin" : "#/signup") + '\');">' + (isSignup ? "Sign in" : "Create one") + '</a></p>' +
     '</div></div></div>';
   if(__authCanvasStop) __authCanvasStop();
-  __authCanvasStop = startAuthCanvas($("auth-canvas"));
+  __authCanvasStop = startDotCanvas($("auth-canvas"), { cell:26, dot:2.2, maxAlpha:0.45, revealSpeed:0.045 });
   setTimeout(function(){ var f = $("auth-name") || $("auth-email"); if(f) f.focus(); }, 350);
 }
 
@@ -700,7 +717,7 @@ async function renderVerifyPage(root, token){
       '<h1>Verifying…</h1><p class="auth-sub">One moment.</p>' +
     '</div></div></div>';
   if(__authCanvasStop) __authCanvasStop();
-  __authCanvasStop = startAuthCanvas($("auth-canvas"));
+  __authCanvasStop = startDotCanvas($("auth-canvas"), { cell:26, dot:2.2, maxAlpha:0.45, revealSpeed:0.045 });
   var card = $("auth-card");
   try{
     var res = await fetch(API_BASE + "/api/auth/verify/" + encodeURIComponent(token), { method:"GET" });
@@ -1799,6 +1816,7 @@ function observeReveals(root){
 }
 
 async function initApp(){
+  startSitewideDots();
   await ensureMe();
   await router();
 }
