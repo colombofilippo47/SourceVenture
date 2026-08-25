@@ -20,8 +20,8 @@
   --outline:rgba(255,255,255,0.35);
   --outline-variant:rgba(255,255,255,0.06);
   --border:rgba(255,255,255,0.10);
-  --primary:#6f8fc9;
-  --primary-bright:#84a0d4;
+  --primary:#647fac;
+  --primary-bright:#7690bd;
   --on-primary:#ffffff;
   --primary-container:#5b7ab8;
   --on-primary-container:#ffffff;
@@ -59,8 +59,8 @@
   --outline:rgba(19,21,43,0.35);
   --outline-variant:rgba(19,21,43,0.09);
   --border:rgba(19,21,43,0.14);
-  --primary:#4864a8;
-  --primary-bright:#3d5694;
+  --primary:#42598e;
+  --primary-bright:#37497a;
   --on-primary:#ffffff;
   --primary-container:#3d5694;
   --on-primary-container:#ffffff;
@@ -108,9 +108,9 @@ p{margin:0;}
 
 .btn{font-weight:600;font-size:13.5px;border-radius:var(--radius);padding:10px 18px;border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo),box-shadow .2s var(--ease-out-expo),border-color .2s var(--ease-out-expo);white-space:nowrap;font-family:var(--font-mono);}
 .btn:active{transform:scale(.98);}
-.btn-primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary);box-shadow:0 0 0 1px rgba(111,143,201,.25),0 2px 8px rgba(111,143,201,.15),inset 0 1px 0 0 rgba(255,255,255,.15);}
-.btn-primary:hover{background:var(--primary-bright);box-shadow:0 0 0 1px rgba(111,143,201,.3),0 3px 12px rgba(111,143,201,.2),inset 0 1px 0 0 rgba(255,255,255,.18);transform:translateY(-1px);}
-.btn-ghost{background:var(--surface);color:var(--on-surface);border-color:var(--outline-variant);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.06);}
+.btn-primary{background:color-mix(in srgb, var(--primary) 78%, transparent);backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6);color:var(--on-primary);border-color:rgba(255,255,255,.16);box-shadow:0 0 0 1px rgba(111,143,201,.25),0 2px 8px rgba(111,143,201,.15),inset 0 1px 0 0 rgba(255,255,255,.22);}
+.btn-primary:hover{background:color-mix(in srgb, var(--primary-bright) 85%, transparent);box-shadow:0 0 0 1px rgba(111,143,201,.3),0 3px 12px rgba(111,143,201,.2),inset 0 1px 0 0 rgba(255,255,255,.26);transform:translateY(-1px);}
+.btn-ghost{background:var(--surface);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);color:var(--on-surface);border-color:var(--outline-variant);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.08);}
 .btn-ghost:hover{background:var(--surface-high);border-color:var(--border);transform:translateY(-1px);}
 .btn-danger{background:transparent;color:var(--error);border-color:rgba(255,107,107,.35);}
 .btn-danger:hover{background:rgba(255,107,107,.08);}
@@ -222,16 +222,31 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .hero{padding:110px 0 120px;}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
 @media(max-width:940px){.hero-grid{grid-template-columns:1fr;}}
-.hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;background:linear-gradient(to bottom,#fff,rgba(255,255,255,.95) 55%,rgba(255,255,255,.72));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
-:root[data-theme="light"] .hero h1{background:linear-gradient(to bottom,#0d0f24,rgba(19,21,43,.92) 55%,rgba(19,21,43,.72));-webkit-background-clip:text;background-clip:text;}
+.hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;}
+/* Gradient text-fill lives on each word span, not the parent h1 — a span
+   only inherits -webkit-text-fill-color (making it transparent) but NOT
+   the parent's own background/background-clip, so without repeating the
+   gradient here every word renders as invisible transparent-on-transparent. */
+.hero h1 .word-blur{background:linear-gradient(to bottom,#fff,rgba(255,255,255,.95) 55%,rgba(255,255,255,.72));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.word-blur{display:inline-block;opacity:0;filter:blur(10px);transform:translateY(8px);animation:wordBlurIn .7s var(--ease-out-expo) forwards;}
+@keyframes wordBlurIn{to{opacity:1;filter:blur(0);transform:translateY(0);}}
+@media (prefers-reduced-motion:reduce){.word-blur{animation:none;opacity:1;filter:none;transform:none;}}
+:root[data-theme="light"] .hero h1 .word-blur{background:linear-gradient(to bottom,#0d0f24,rgba(19,21,43,.92) 55%,rgba(19,21,43,.72));-webkit-background-clip:text;background-clip:text;}
 @media(max-width:940px){.hero h1{font-size:52px;}}
 @media(max-width:520px){.hero h1{font-size:36px;}}
 .hero .lead{font-size:16.5px;color:var(--on-surface-variant);max-width:480px;margin-bottom:28px;}
 .hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
 .code-panel{background:var(--surface-lowest);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.03),0 20px 60px rgba(0,0,0,.5),0 0 100px rgba(111,143,201,.08);}
-.code-panel .cp-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--outline-variant);font-family:var(--font-mono);font-size:11.5px;color:var(--on-surface-variant);}
+.code-panel .cp-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--outline-variant);font-family:var(--font-mono);font-size:11.5px;color:var(--on-surface-variant);position:relative;}
 .code-panel .cp-bar .dots{display:flex;gap:6px;}
 .code-panel .cp-bar .dots span{width:8px;height:8px;border-radius:50%;background:var(--surface-highest);}
+.cp-close{margin-left:auto;width:20px;height:20px;border-radius:50%;border:none;background:transparent;color:var(--on-surface-variant);font-size:16px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background-color .2s var(--ease-out-expo),color .2s var(--ease-out-expo);}
+.cp-close:hover{background:var(--surface-high);color:var(--on-surface);}
+@keyframes panelBobIn{from{opacity:0;transform:translateX(70px);}to{opacity:1;transform:translateX(0);}}
+@keyframes panelBobOut{to{opacity:0;transform:translateX(-40px);}}
+.code-panel.cp-entering{animation:panelBobIn .6s cubic-bezier(.34,1.56,.64,1) both;}
+.code-panel.cp-leaving{animation:panelBobOut .2s ease-in both;}
+@media (prefers-reduced-motion:reduce){.code-panel.cp-entering,.code-panel.cp-leaving{animation:none;}}
 .code-panel pre{margin:0;padding:20px;font-family:var(--font-mono);font-size:12.5px;line-height:1.9;color:var(--on-surface-variant);overflow-x:auto;}
 .code-panel .tok-kw{color:var(--tertiary);}
 .code-panel .tok-str{color:var(--primary);}
@@ -250,6 +265,16 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .step p{color:var(--on-surface-variant);font-size:13.5px;}
 footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .foot-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;color:var(--outline);font-size:12px;font-family:var(--font-mono);}
+.foot-links{display:flex;gap:16px;}
+.foot-links a{color:var(--outline);text-decoration:none;}
+.foot-links a:hover{color:var(--on-surface);text-decoration:underline;}
+.legal-page{max-width:760px;margin:0 auto;padding:80px 24px 100px;}
+.legal-page h1{font-size:2rem;margin-bottom:8px;}
+.legal-page .legal-updated{color:var(--on-surface-variant);font-size:13px;font-family:var(--font-mono);margin-bottom:40px;}
+.legal-page h2{font-size:1.15rem;margin:36px 0 12px;}
+.legal-page p,.legal-page li{color:var(--on-surface-variant);line-height:1.7;font-size:15px;}
+.legal-page ul{padding-left:20px;margin:8px 0;}
+.legal-page li{margin-bottom:6px;}
 
 .scarcity{max-width:640px;margin:0 auto 32px;padding:36px 30px;text-align:center;display:flex;flex-direction:column;align-items:center;}
 .scarcity .lock-badge{width:48px;height:48px;border-radius:50%;background:var(--surface-high);border:1px solid var(--outline-variant);display:flex;align-items:center;justify-content:center;margin-bottom:16px;}
@@ -395,10 +420,10 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .toast.err{border-color:rgba(255,107,107,0.35);color:var(--error);}
 .skel{background:linear-gradient(90deg,var(--surface-low) 25%,var(--surface-high) 37%,var(--surface-low) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px;}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
-.reveal{opacity:0;transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
-.reveal.in{opacity:1;transform:translateY(0) scale(1);}
+.reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
+.reveal.in{opacity:1;filter:blur(0);transform:translateY(0) scale(1);}
 .magnetic{transition:transform .25s var(--ease-out-expo);will-change:transform;}
-@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none;}}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;filter:none;transform:none;transition:none;}}
 
 /* ---------- help widget ---------- */
 #help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(111,143,201,.5),0 6px 24px rgba(111,143,201,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
@@ -464,6 +489,43 @@ function escapeHtml(s){
   return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
   });
+}
+// Wraps each word in its own span with a staggered animation-delay, for a
+// word-by-word blur-in effect on load (hero title). Words stay wrapped in
+// nowrap spans, spaces between them are plain text nodes, so line-wrapping
+// still happens naturally at word boundaries.
+function blurWords(text){
+  return escapeHtml(text).split(" ").map(function(w, i){
+    return '<span class="word-blur" style="animation-delay:' + (i * 0.09).toFixed(2) + 's">' + w + '</span>';
+  }).join(" ");
+}
+
+// Hero "terminal" panel — closable, cycles to a different real snippet each
+// time (each one describing an actual product feature, not filler) sliding
+// in from the right with a slight spring overshoot.
+var HERO_SNIPPETS = [
+  { file: "coach_session.py", code: '<span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Coach\n\n<span class="tok-fn">coach</span> = Coach(\n    mode=<span class="tok-str">"editorial"</span>,\n    repo=<span class="tok-str">"you/your-project"</span>,\n)\n\n<span class="tok-cm"># grounded in your real README + commits</span>\n<span class="tok-fn">coach</span>.analyze_commit(hash)' },
+  { file: "rating_council.py", code: '<span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Council\n\n<span class="tok-fn">council</span> = Council(judges=[\n    <span class="tok-str">"vc"</span>, <span class="tok-str">"technical"</span>, <span class="tok-str">"growth"</span>,\n])\n\n<span class="tok-cm"># median per dimension, not mean —</span>\n<span class="tok-cm"># one outlier judge can\'t swing it</span>\n<span class="tok-fn">council</span>.rate(project)' },
+  { file: "publish.py", code: '<span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Project\n\n<span class="tok-fn">project</span> = Project(\n    repo=<span class="tok-str">"you/your-project"</span>,\n    pitch=pitch_text,\n)\n\n<span class="tok-cm"># draft by default — you choose</span>\n<span class="tok-cm"># what investors ever see</span>\n<span class="tok-fn">project</span>.publish(visible_to=<span class="tok-str">"nobody"</span>)' },
+];
+var heroSnippetIndex = 0;
+function heroPanelInner(i){
+  var s = HERO_SNIPPETS[i % HERO_SNIPPETS.length];
+  return '<div class="cp-bar"><div class="dots"><span></span><span></span><span></span></div>' + s.file +
+      '<button class="cp-close" onclick="cycleHeroPanel()" aria-label="Next snippet" title="Next">&times;</button></div>' +
+    '<pre>' + s.code + '</pre>';
+}
+function cycleHeroPanel(){
+  var panel = $("hero-code-panel");
+  if(!panel) return;
+  heroSnippetIndex = (heroSnippetIndex + 1) % HERO_SNIPPETS.length;
+  panel.classList.add("cp-leaving");
+  setTimeout(function(){
+    panel.innerHTML = heroPanelInner(heroSnippetIndex);
+    panel.classList.remove("cp-leaving");
+    panel.classList.remove("cp-entering"); void panel.offsetWidth; // restart animation
+    panel.classList.add("cp-entering");
+  }, 200);
 }
 function renderRichText(s){
   var t = escapeHtml(s == null ? "" : s);
@@ -782,6 +844,32 @@ async function renderVerifyPage(root, token){
       '<button class="btn btn-primary btn-block" onclick="nav(\'' + (isLoggedIn() ? "#/settings" : "#/signin") + '\')">' + (isLoggedIn() ? "Go to account settings" : "Sign in") + '</button>';
   }
 }
+// 2026-08-25: real content describing what this system actually does and
+// stores — not boilerplate copied from elsewhere. Keep in sync with
+// backend/main.py if the data model changes (auth, sessions, projects,
+// investor applications, coach chat).
+function privacyHtml(){
+  return '<h1>Privacy Policy</h1><p class="legal-updated">Last updated 25 August 2026</p>' +
+    '<h2>What we collect</h2><p>An account needs an email address, a display name, and a password (stored as a salted PBKDF2-HMAC-SHA256 hash — never the plain password, never logged). If you publish a project, we store what you write: your pitch, a link to your public GitHub repository, and any investor-facing summary you generate. If you talk to the AI coach, that conversation is stored so the coach has context across a session.</p>' +
+    '<h2>How sign-in works</h2><p>Logging in sets an httpOnly session cookie — our JavaScript never reads the token itself, which limits what an XSS bug could do. A separate, non-secret CSRF cookie is echoed back as a header on every request that changes data, as defense in depth.</p>' +
+    '<h2>The AI coach</h2><p>When you use the coach, your pitch text and the public contents of the GitHub repository you linked (description, README, file structure) are sent to our AI provider to generate a response. We don\'t send your password, email, or other users\' data.</p>' +
+    '<h2>What we don\'t do</h2><ul><li>We don\'t sell your data.</li><li>We don\'t run third-party analytics or ad trackers on this site today.</li><li>We don\'t share a draft project or its investor summary with anyone except you, unless you publish it — and the investor summary specifically is only ever shown to an investor account that\'s been individually approved.</li></ul>' +
+    '<h2>Investor directory</h2><p>If you apply for investor access, we store your name, email, firm, and application status. Access to the gated directory requires our manual approval — it isn\'t automatic.</p>' +
+    '<h2>Data deletion</h2><p>Ask us and we\'ll delete your account and associated data. This is a young, actively-developed product — if you want something specific removed, the fastest path is asking directly rather than waiting on a self-serve flow that doesn\'t exist yet.</p>' +
+    '<h2>Contact</h2><p>' + escapeHtml(sourceventureContactNote()) + '</p>';
+}
+function termsHtml(){
+  return '<h1>Terms of Service</h1><p class="legal-updated">Last updated 25 August 2026</p>' +
+    '<h2>What this is</h2><p>SourceVenture lets you publish a project, talk to a private AI coach grounded in your real repository, and optionally apply for a gated investor directory once enough projects exist. It\'s an early-stage, actively-developed product — expect rough edges.</p>' +
+    '<h2>Your account</h2><p>You\'re responsible for what you publish and for keeping your password to yourself. Don\'t share an account across people; each real user should have their own.</p>' +
+    '<h2>Your content</h2><p>You keep ownership of what you write here. By publishing a project you\'re allowing it to be shown publicly on the platform (and, for the AI coach, sent to our AI provider to generate responses). Draft projects are not public and are never shown to anyone but you.</p>' +
+    '<h2>The AI coach isn\'t advice</h2><p>Coach output is generated by an AI model reading your pitch and public repo content. It can be wrong. Treat it as a drafting aid, not investment, legal, or financial advice.</p>' +
+    '<h2>Free tier</h2><p>The free tier includes 25 coach messages per rolling 24 hours, enforced server-side. We may change limits or pricing as the product develops; we\'ll try to be upfront about it rather than silently changing behavior.</p>' +
+    '<h2>Fair use</h2><p>Don\'t use this to publish anything illegal, to impersonate someone else, or to abuse the coach/investor-application flow (e.g. scripted spam applications). We can suspend accounts that do.</p>' +
+    '<h2>No warranty</h2><p>Provided as-is, without warranty of any kind, while this is actively being built. We\'ll do our best to keep it reliable and to communicate honestly when something is broken rather than pretend it isn\'t.</p>' +
+    '<h2>Contact</h2><p>' + escapeHtml(sourceventureContactNote()) + '</p>';
+}
+function sourceventureContactNote(){ return "No dedicated support email is set up yet — for now, reach out through whoever gave you access to SourceVenture."; }
 async function doLogout(){
   try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include", headers: csrfHeaders() }); }catch(e){}
   clearAuth();
@@ -929,6 +1017,8 @@ const ROUTES = [
   { test:/^#\/signin$/, name:"signin" },
   { test:/^#\/signup$/, name:"signup" },
   { test:/^#\/verify\/([^\/]+)$/, name:"verify" },
+  { test:/^#\/privacy$/, name:"privacy" },
+  { test:/^#\/terms$/, name:"terms" },
   { test:/^#\/dashboard$/, name:"dashboard" },
   { test:/^#\/projects$/, name:"projects" },
   { test:/^#\/new$/, name:"new" },
@@ -966,6 +1056,13 @@ async function router(){
 
   if(matched.name === "verify"){
     try{ await renderVerifyPage(root, param); }catch(e){ console.error(e); root.innerHTML = errorBlock(e); }
+    return;
+  }
+
+  if(matched.name === "privacy" || matched.name === "terms"){
+    root.innerHTML = '<div id="landing-nav"><div class="wrap"><a href="#/" class="tb-title">SourceVenture</a>' + themeToggleHtml() + '</div></div>' +
+      '<div class="legal-page">' + (matched.name === "privacy" ? privacyHtml() : termsHtml()) + '</div>' +
+      '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span class="foot-links"><a href="#" onclick="event.preventDefault();nav(\'#/privacy\');">Privacy</a><a href="#" onclick="event.preventDefault();nav(\'#/terms\');">Terms</a></span></div></footer>';
     return;
   }
 
@@ -1056,7 +1153,7 @@ async function renderLanding(root){
   '<header class="hero"><div class="wrap hero-grid">' +
     '<div>' +
       '<div class="eyebrow">AI-native venture engineering</div>' +
-      '<h1>Think with something that understands the code.</h1>' +
+      '<h1>' + blurWords("Think with something that understands the code.") + '</h1>' +
       '<p class="lead">Publish your project, connect the real repository, and get a private AI coach grounded in your actual code and pitch — not a generic prompt. Investor access stays gated until the cohort is real.</p>' +
       '<div class="hero-actions">' +
         '<button class="btn btn-primary magnetic" onclick="nav(\'#/new\')">Publish your project<span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></button>' +
@@ -1064,9 +1161,7 @@ async function renderLanding(root){
       '</div>' +
       '<div class="mono muted" style="font-size:11.5px;">' + published.length + ' projects synced · coach powered by a private Python backend</div>' +
     '</div>' +
-    '<div class="code-panel"><div class="cp-bar"><div class="dots"><span></span><span></span><span></span></div>coach_session.py</div>' +
-      '<pre><span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Coach\n\n<span class="tok-fn">coach</span> = Coach(\n    mode=<span class="tok-str">"editorial"</span>,\n    repo=<span class="tok-str">"you/your-project"</span>,\n)\n\n<span class="tok-cm"># grounded in your real README + commits</span>\n<span class="tok-fn">coach</span>.analyze_commit(hash)</pre>' +
-    '</div>' +
+    '<div class="code-panel" id="hero-code-panel">' + heroPanelInner(0) + '</div>' +
   '</div></header>' +
 
   '<section class="landing-sec" id="how"><div class="wrap">' +
@@ -1088,7 +1183,9 @@ async function renderLanding(root){
     '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
-  '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span></div></footer>';
+  '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span>' +
+    '<span class="foot-links"><a href="#" onclick="event.preventDefault();nav(\'#/privacy\');">Privacy</a><a href="#" onclick="event.preventDefault();nav(\'#/terms\');">Terms</a></span>' +
+  '</div></footer>';
 }
 /* ============================================================
    DASHBOARD (Overview)
