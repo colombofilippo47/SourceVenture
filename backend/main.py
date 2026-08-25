@@ -41,12 +41,14 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 from typing import List, Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr, Field
 
 load_dotenv()
@@ -69,6 +71,14 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
+# Same "present but unset = feature quietly unavailable" pattern as
+# RESEND_API_KEY above — GOOGLE_CLIENT_ID/SECRET need a real Google Cloud
+# OAuth consent screen + credentials, which only Denis can create (needs
+# his own Google account). Until they're set, /api/auth/google/start
+# returns a clear 503 instead of a broken redirect.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/google/callback")
 DB_PATH = Path(__file__).parent / "data.db"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
@@ -131,11 +141,17 @@ def init_db():
         # already has both columns from the CREATE TABLE above and these
         # no-op.
         for stmt in ("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN verify_token TEXT"):
+                     "ALTER TABLE users ADD COLUMN verify_token TEXT",
+                     "ALTER TABLE users ADD COLUMN google_id TEXT",
+                     "ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'"):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass
+        # Partial unique index (SQLite has no ADD CONSTRAINT) — only enforces
+        # uniqueness where google_id is actually set, so it doesn't collide
+        # on the many NULL values from password-only accounts.
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -254,7 +270,7 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def user_public(row) -> dict:
-    return {"id": row[0], "email": row[1], "name": row[2]}
+    return {"id": row[0], "email": row[1], "name": row[2], "emailVerified": bool(row[3])}
 
 
 def set_session_cookie(response: Response, token: str):
@@ -339,7 +355,7 @@ def get_current_user(request: Request):
         if not row or row[1] < int(time.time()):
             raise HTTPException(status_code=401, detail="Session expired or invalid")
         user = conn.execute(
-            "SELECT id, email, name FROM users WHERE id = ?", (row[0],)
+            "SELECT id, email, name, email_verified FROM users WHERE id = ?", (row[0],)
         ).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
@@ -428,13 +444,33 @@ def verify_email(token: str):
         conn.close()
 
 
+@app.post("/api/auth/resend-verification")
+def resend_verification(request: Request, background_tasks: BackgroundTasks, current_user=Depends(get_current_user)):
+    # Session-gated rather than a raw email in the body — signup logs the
+    # user in immediately, so by the time this is reachable they already
+    # have a session. Rate limit keyed on user_id, not IP, so one impatient
+    # click can't lock out everyone behind the same NAT/office IP.
+    check_rate_limit("resend-verification", current_user["id"], limit=3, window_seconds=600)
+    if current_user["emailVerified"]:
+        return {"ok": True, "alreadyVerified": True}
+    conn = get_db()
+    try:
+        verify_token = secrets.token_urlsafe(24)
+        conn.execute("UPDATE users SET verify_token = ? WHERE id = ?", (verify_token, current_user["id"]))
+        conn.commit()
+        background_tasks.add_task(send_verification_email, current_user["email"], current_user["name"], verify_token)
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request, response: Response):
     check_rate_limit("login", client_ip(request), limit=10, window_seconds=600)
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT id, email, name, password_hash FROM users WHERE email = ?", (req.email,)
+            "SELECT id, email, name, password_hash, email_verified FROM users WHERE email = ?", (req.email,)
         ).fetchone()
         if not row or not verify_password(req.password, row[3]):
             log.info("failed login attempt for email=%s", req.email)
@@ -443,9 +479,126 @@ def login(req: LoginRequest, request: Request, response: Response):
         conn.commit()
         set_session_cookie(response, token)
         log.info("login: user_id=%s", row[0])
-        return {"user": {"id": row[0], "email": row[1], "name": row[2]}}
+        return {"user": user_public((row[0], row[1], row[2], row[4]))}
     finally:
         conn.close()
+
+
+# --------------------------------------------------------------- Google SSO
+# Manual OAuth2 (authorization-code flow) via plain httpx calls to Google's
+# well-documented endpoints — no extra dependency (authlib etc.) needed for
+# something this codebase already has the pieces for (httpx, sessions,
+# cookies). `state` is a CSRF-style nonce stored in a short-lived cookie and
+# checked on callback, per Google's own recommendation, since this flow
+# can't use the app's own CSRF header (the browser navigates directly).
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+GOOGLE_STATE_COOKIE = "google_oauth_state"
+
+
+@app.get("/api/auth/google/start")
+def google_start(response: Response):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        # Honest failure, not a broken redirect to a client_id-less Google
+        # URL — matches this file's existing pattern for unset third-party
+        # keys (see send_verification_email's RESEND_API_KEY check).
+        raise HTTPException(status_code=503, detail="Google sign-in isn't configured yet")
+    state = secrets.token_urlsafe(24)
+    response.set_cookie(
+        key=GOOGLE_STATE_COOKIE, value=state, max_age=600, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+
+
+@app.get("/api/auth/google/callback")
+async def google_callback(request: Request, response: Response, code: str = "", state: str = "", error: str = ""):
+    def fail(reason: str):
+        # Land back on the sign-in page with a short reason code rather than
+        # a raw error page — the frontend can show a real message from it.
+        return RedirectResponse(f"{PUBLIC_APP_URL}/#/signin?google_error={reason}")
+
+    if error:
+        log.info("google oauth error from provider: %s", error)
+        return fail("denied")
+    cookie_state = request.cookies.get(GOOGLE_STATE_COOKIE)
+    if not code or not state or not cookie_state or state != cookie_state:
+        log.warning("google oauth state mismatch or missing code")
+        return fail("state_mismatch")
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return fail("not_configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            token_res = await client.post(GOOGLE_TOKEN_URL, data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            })
+            token_res.raise_for_status()
+            access_token = token_res.json().get("access_token")
+            if not access_token:
+                return fail("token_exchange_failed")
+            userinfo_res = await client.get(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+            userinfo_res.raise_for_status()
+            info = userinfo_res.json()
+    except httpx.HTTPError as e:
+        log.warning("google oauth token/userinfo call failed: %s", e)
+        return fail("provider_error")
+
+    google_id = info.get("sub")
+    email = info.get("email")
+    name = (info.get("name") or (email.split("@")[0] if email else "Google user")).strip()[:120]
+    if not google_id or not email:
+        return fail("incomplete_profile")
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE google_id = ?", (google_id,)).fetchone()
+        if not row:
+            # Not linked by google_id yet — check for an existing
+            # password-account with the same email and link it (Google has
+            # already verified this email, so this isn't a spoofing risk
+            # the way an unverified claim would be), rather than creating a
+            # second, confusing duplicate account.
+            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = ?", (email,)).fetchone()
+            if existing:
+                conn.execute("UPDATE users SET google_id = ?, email_verified = 1 WHERE id = ?", (google_id, existing[0]))
+                row = (existing[0], existing[1], existing[2], 1)
+            else:
+                user_id = secrets.token_hex(12)
+                # No password possible via this path — a long random value
+                # satisfies the NOT NULL column and is never used to log in;
+                # a future "set a password" flow (from Settings) would
+                # overwrite it properly for someone who wants both options.
+                random_password_hash = hash_password(secrets.token_urlsafe(32))
+                conn.execute(
+                    "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, google_id, auth_provider) "
+                    "VALUES (?, ?, ?, ?, ?, 1, ?, 'google')",
+                    (user_id, email, name, random_password_hash, int(time.time()), google_id),
+                )
+                row = (user_id, email, name, 1)
+        token = create_session(conn, row[0])
+        conn.commit()
+    finally:
+        conn.close()
+
+    redirect = RedirectResponse(f"{PUBLIC_APP_URL}/#/dashboard")
+    set_session_cookie(redirect, token)
+    redirect.delete_cookie(GOOGLE_STATE_COOKIE, path="/")
+    log.info("google login: user_id=%s", row[0])
+    return redirect
 
 
 @app.post("/api/auth/logout")
