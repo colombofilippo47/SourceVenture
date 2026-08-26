@@ -77,9 +77,12 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "x-csrf-token"
 
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:5500").split(",") if o.strip()]
-# Same number the frontend already displays ("X / 20 projects published") —
-# kept in one place now that the backend actually enforces it too.
-DIRECTORY_THRESHOLD = int(os.environ.get("DIRECTORY_THRESHOLD", "20"))
+# Two independent cohort thresholds now (2026-08-26, Denis) — the directory
+# only opens once BOTH real signups and real published projects clear a bar,
+# not projects alone. Kept in one place now that the backend actually
+# enforces both.
+DIRECTORY_THRESHOLD = int(os.environ.get("DIRECTORY_THRESHOLD", "30"))
+USER_THRESHOLD = int(os.environ.get("USER_THRESHOLD", "20"))
 
 app = FastAPI(title="SourceVenture API")
 
@@ -334,6 +337,24 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/stats")
+def public_stats():
+    # Deliberately public + unauthenticated, deliberately just two aggregate
+    # counts — same "public, ungated" precedent as GET /api/projects (the
+    # landing page's "X published" count needs this same data anonymously).
+    # Never leaks anything per-user (no emails, no names, no ids).
+    conn = get_db()
+    try:
+        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        published = conn.execute("SELECT COUNT(*) FROM projects WHERE status = 'published'").fetchone()[0]
+        return {
+            "totalUsers": users, "userThreshold": USER_THRESHOLD,
+            "publishedProjects": published, "projectThreshold": DIRECTORY_THRESHOLD,
+        }
+    finally:
+        conn.close()
+
+
 async def send_verification_email(email: str, name: str, verify_token: str):
     link = f"{PUBLIC_APP_URL}/#/verify/{verify_token}"
     if not RESEND_API_KEY:
@@ -576,10 +597,11 @@ def investor_directory(current_user=Depends(get_current_user)):
         count = conn.execute(
             "SELECT COUNT(*) FROM projects WHERE status = 'published'"
         ).fetchone()[0]
-        if count < DIRECTORY_THRESHOLD:
+        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if count < DIRECTORY_THRESHOLD or users < USER_THRESHOLD:
             raise HTTPException(
                 status_code=403,
-                detail=f"Directory isn't open yet — {count}/{DIRECTORY_THRESHOLD} projects published",
+                detail=f"Directory isn't open yet — {users}/{USER_THRESHOLD} users, {count}/{DIRECTORY_THRESHOLD} projects published",
             )
         rows = conn.execute(
             "SELECT data FROM projects WHERE status = 'published' ORDER BY published_at DESC"
