@@ -21,13 +21,22 @@ Data model (SQLite, one file: data.db)
 
 Auth
 ----
-Simple email/password accounts. Passwords are hashed with PBKDF2-HMAC-SHA256
-(200k iterations) plus a random salt — never stored or logged in plain text.
+Email/password accounts, plus Google Sign-In (OAuth2 authorization-code
+flow, see /api/auth/google/start + /callback — 503s cleanly until
+GOOGLE_CLIENT_ID/SECRET are set; only Denis can create those in Google
+Cloud Console). Passwords are hashed with PBKDF2-HMAC-SHA256 (200k
+iterations) plus a random salt — never stored or logged in plain text.
 Logging in sets an httpOnly, SameSite=Lax session cookie (`session_token`)
 that identifies a row in `sessions`; JavaScript never reads the token
-directly, which limits the blast radius of an XSS bug. There is no
-OAuth/SSO and no email verification — see README.md for what a real
-production hardening pass would still add.
+directly, which limits the blast radius of an XSS bug. Email verification
+is real (see /api/auth/verify/{token}); Google accounts are auto-verified.
+
+Admin
+-----
+A small set of real operator endpoints under /api/admin/* — approve/reject
+investor applications, list users/projects, an overview stats card. Gated
+by ADMIN_EMAILS (comma-separated env var, case-insensitive) rather than a
+stored role column; see require_admin() below.
 """
 
 import asyncio
