@@ -1105,7 +1105,8 @@ const ROUTES = [
   { test:/^#\/summary\/([^\/]+)$/, name:"summary" },
   { test:/^#\/investors$/, name:"investors" },
   { test:/^#\/settings$/, name:"settings" },
-  { test:/^#\/settings\/([^\/]+)$/, name:"settings" }
+  { test:/^#\/settings\/([^\/]+)$/, name:"settings" },
+  { test:/^#\/admin$/, name:"admin" }
 ];
 
 async function router(){
@@ -1167,6 +1168,7 @@ async function router(){
     else if(matched.name === "summary") await renderSummary(main, param);
     else if(matched.name === "investors") await renderInvestors(main);
     else if(matched.name === "settings") await renderSettings(main, param || "account");
+    else if(matched.name === "admin") await renderAdmin(main);
   }catch(e){
     console.error(e);
     main.innerHTML = errorBlock(e);
@@ -1195,6 +1197,8 @@ function appShellHtml(routeName){
           '<a data-r="projects" href="#/projects"><span class="material-symbols-outlined">folder</span>Projects</a>' +
           '<a data-r="investors" href="#/investors"><span class="material-symbols-outlined">handshake</span>Investors</a>' +
           '<a data-r="settings" href="#/settings"><span class="material-symbols-outlined">settings</span>Settings</a>' +
+          ((STATE.auth && STATE.auth.user && STATE.auth.user.isAdmin) ?
+            '<a data-r="admin" href="#/admin"><span class="material-symbols-outlined">shield_person</span>Admin</a>' : '') +
         '</div>' +
         '<div class="sn-foot">' +
           '<a href="#" onclick="event.preventDefault();showToast(\'Docs are not part of this preview.\');"><span class="material-symbols-outlined" style="font-size:18px;">menu_book</span>Documentation</a>' +
@@ -1871,6 +1875,114 @@ async function submitInvestorApp(){
     btn.disabled = false; btn.textContent = "Submit application";
   }
 }
+/* ============================================================
+   ADMIN
+   2026-08-26: real admin panel — the investor-applications table has
+   existed since round 12 with no way to approve/reject anything except a
+   direct DB edit (see the comment on its CREATE TABLE in main.py). Gated
+   both server-side (require_admin, ADMIN_EMAILS env allowlist) and here
+   (route only reachable/linked for STATE.auth.user.isAdmin — an
+   unauthorized visit still just 403s cleanly against every fetch below).
+   ============================================================ */
+async function renderAdmin(main){
+  if(!STATE.auth || !STATE.auth.user || !STATE.auth.user.isAdmin){
+    main.innerHTML = '<div class="empty-state"><h3>Admin access required</h3><p>This account isn\'t on the admin allowlist.</p></div>';
+    return;
+  }
+  main.innerHTML = '<div class="skel" style="height:300px;"></div>';
+  try{
+    var overviewRes = await fetch(API_BASE + "/api/admin/overview", { credentials:"include" });
+    if(overviewRes.status === 403){ main.innerHTML = '<div class="empty-state"><h3>Admin access required</h3></div>'; return; }
+    var overview = await overviewRes.json();
+    var apps = await fetch(API_BASE + "/api/admin/investor-applications", { credentials:"include" }).then(function(r){ return r.json(); });
+    var users = await fetch(API_BASE + "/api/admin/users", { credentials:"include" }).then(function(r){ return r.json(); });
+    var projects = await fetch(API_BASE + "/api/admin/projects", { credentials:"include" }).then(function(r){ return r.json(); });
+
+    var pending = apps.filter(function(a){ return a.status === "pending"; });
+    var decided = apps.filter(function(a){ return a.status !== "pending"; });
+
+    main.innerHTML =
+      '<div class="eyebrow">Admin</div><h1 class="page-title">Operations</h1>' +
+      '<div class="grid-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0 32px;">' +
+        '<div class="card stat-card"><div class="lbl">Users</div><div class="val">' + overview.totalUsers + ' / ' + overview.userThreshold + '</div></div>' +
+        '<div class="card stat-card"><div class="lbl">Published</div><div class="val">' + overview.publishedProjects + ' / ' + overview.projectThreshold + '</div></div>' +
+        '<div class="card stat-card"><div class="lbl">Drafts</div><div class="val">' + overview.draftProjects + '</div></div>' +
+        '<div class="card stat-card"><div class="lbl">Pending investors</div><div class="val">' + overview.pendingInvestorApplications + '</div></div>' +
+      '</div>' +
+
+      '<h2 style="font-family:var(--font-display);font-size:18px;margin:0 0 12px;">Investor applications</h2>' +
+      (pending.length === 0 ? '<div class="card" style="padding:16px 18px;color:var(--on-surface-variant);font-size:13px;">Nothing pending.</div>' :
+        '<div class="stack-lg">' + pending.map(adminAppRowHtml).join("") + '</div>') +
+      (decided.length ? '<details style="margin-top:16px;"><summary class="mono" style="cursor:pointer;color:var(--on-surface-variant);font-size:12px;">' + decided.length + ' decided</summary>' +
+        '<div class="stack-lg" style="margin-top:10px;">' + decided.map(adminAppRowHtml).join("") + '</div></details>' : "") +
+
+      '<h2 style="font-family:var(--font-display);font-size:18px;margin:36px 0 12px;">Users (' + users.length + ')</h2>' +
+      '<div class="card" style="overflow-x:auto;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+          '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
+            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th>' +
+          '</tr></thead><tbody>' +
+          users.map(function(u){
+            return '<tr style="border-top:1px solid var(--outline-variant);">' +
+              '<td style="padding:10px 14px;">' + escapeHtml(u.name) + '</td>' +
+              '<td style="padding:10px 14px;" class="mono muted">' + escapeHtml(u.email) + '</td>' +
+              '<td style="padding:10px 14px;">' + (u.emailVerified ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);">check_circle</span>' : '<span class="muted">—</span>') + '</td>' +
+              '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(u.createdAt * 1000) + '</td>' +
+            '</tr>';
+          }).join("") +
+          '</tbody></table>' +
+      '</div>' +
+
+      '<h2 style="font-family:var(--font-display);font-size:18px;margin:36px 0 12px;">Projects (' + projects.length + ')</h2>' +
+      (projects.length === 0 ? '<div class="card" style="padding:16px 18px;color:var(--on-surface-variant);font-size:13px;">No projects yet.</div>' :
+        '<div class="card" style="overflow-x:auto;">' +
+          '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+            '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
+              '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Owner</th><th style="padding:10px 14px;">Status</th><th style="padding:10px 14px;">Updated</th>' +
+            '</tr></thead><tbody>' +
+            projects.map(function(p){
+              return '<tr style="border-top:1px solid var(--outline-variant);">' +
+                '<td style="padding:10px 14px;">' + escapeHtml(p.name || "Untitled") + '</td>' +
+                '<td style="padding:10px 14px;" class="mono muted">' + escapeHtml(p.ownerEmail || "—") + '</td>' +
+                '<td style="padding:10px 14px;"><span class="proj-card pc-status" style="display:inline-block;">' + escapeHtml(p.status) + '</span></td>' +
+                '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(p.updatedAt * 1000) + '</td>' +
+              '</tr>';
+            }).join("") +
+            '</tbody></table>' +
+        '</div>');
+  }catch(e){
+    console.error(e);
+    main.innerHTML = errorBlock(e);
+  }
+}
+function adminAppRowHtml(a){
+  var pillColor = a.status === "approved" ? "var(--primary)" : a.status === "rejected" ? "var(--error)" : "var(--tertiary)";
+  return '<div class="card" style="padding:14px 18px;display:flex;align-items:center;gap:14px;">' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-weight:600;">' + escapeHtml(a.applicantName) + (a.firm ? ' <span class="muted" style="font-weight:400;">— ' + escapeHtml(a.firm) + '</span>' : '') + '</div>' +
+      '<div class="mono muted" style="font-size:11.5px;">' + escapeHtml(a.userEmail) + ' · applied ' + timeAgo(a.createdAt * 1000) + '</div>' +
+    '</div>' +
+    '<span class="mono" style="font-size:11px;text-transform:uppercase;color:' + pillColor + ';">' + a.status + '</span>' +
+    (a.status === "pending" ?
+      '<div style="display:flex;gap:8px;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="adminDecideApp(\'' + a.id + '\',\'reject\')">Reject</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="adminDecideApp(\'' + a.id + '\',\'approve\')">Approve</button>' +
+      '</div>' : '') +
+  '</div>';
+}
+async function adminDecideApp(id, action){
+  try{
+    var res = await fetch(API_BASE + "/api/admin/investor-applications/" + id + "/decide", {
+      method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+      body: JSON.stringify({ action: action })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't save decision");
+    showToast(action === "approve" ? "Application approved." : "Application rejected.");
+    renderAdmin($("main"));
+  }catch(e){ showToast(e.message, true); }
+}
+
 /* ============================================================
    SETTINGS
    ============================================================ */

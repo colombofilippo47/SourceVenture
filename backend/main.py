@@ -75,6 +75,11 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_NAME = "session_token"
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "x-csrf-token"
+# 2026-08-26: env-var admin allowlist rather than a stored is_admin column —
+# no migration needed, and promoting/demoting an admin is just an env var
+# change + redeploy, which is the right amount of ceremony for "a handful of
+# trusted operators" at this stage. Comparison is case-insensitive.
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "http://localhost:5500").split(",") if o.strip()]
 # Two independent cohort thresholds now (2026-08-26, Denis) — the directory
@@ -232,6 +237,7 @@ def user_public(row) -> dict:
         # does, so this stays a real avatar there and None everywhere else
         # until the frontend's next /me refresh picks it up.
         "avatarUrl": row[4] if len(row) > 4 else None,
+        "isAdmin": row[1].lower() in ADMIN_EMAILS,
     }
 
 
@@ -320,6 +326,12 @@ def get_current_user(request: Request):
         return user_public(user)
     finally:
         conn.close()
+
+
+def require_admin(current_user=Depends(get_current_user)):
+    if not current_user.get("isAdmin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
 
 def create_session(conn, user_id: str) -> str:
@@ -607,6 +619,121 @@ def investor_directory(current_user=Depends(get_current_user)):
             "SELECT data FROM projects WHERE status = 'published' ORDER BY published_at DESC"
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
+    finally:
+        conn.close()
+
+
+class InvestorDecisionRequest(BaseModel):
+    action: str  # "approve" | "reject"
+
+
+# ------------------------------------------------------------------- admin
+# 2026-08-26: real admin surface for the gap flagged at the investor_applications
+# table's creation ("No admin UI exists yet to approve applications — see
+# README.md for the direct-DB-update path until one is built"). Every route
+# here is behind require_admin (email allowlist via ADMIN_EMAILS env var).
+@app.get("/api/admin/overview")
+def admin_overview(_admin=Depends(require_admin)):
+    conn = get_db()
+    try:
+        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        published = conn.execute("SELECT COUNT(*) FROM projects WHERE status = 'published'").fetchone()[0]
+        drafts = conn.execute("SELECT COUNT(*) FROM projects WHERE status != 'published'").fetchone()[0]
+        pending_investors = conn.execute(
+            "SELECT COUNT(*) FROM investor_applications WHERE status = 'pending'"
+        ).fetchone()[0]
+        return {
+            "totalUsers": users, "userThreshold": USER_THRESHOLD,
+            "publishedProjects": published, "draftProjects": drafts, "projectThreshold": DIRECTORY_THRESHOLD,
+            "pendingInvestorApplications": pending_investors,
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/users")
+def admin_list_users(_admin=Depends(require_admin)):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, email, name, created_at, email_verified FROM users ORDER BY created_at DESC"
+        ).fetchall()
+        return [
+            {"id": r[0], "email": r[1], "name": r[2], "createdAt": r[3], "emailVerified": bool(r[4])}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/investor-applications")
+def admin_list_investor_applications(status: Optional[str] = None, _admin=Depends(require_admin)):
+    conn = get_db()
+    try:
+        query = (
+            "SELECT ia.id, ia.user_id, u.email, u.name, ia.name, ia.firm, ia.status, ia.created_at, ia.decided_at "
+            "FROM investor_applications ia JOIN users u ON u.id = ia.user_id"
+        )
+        params: tuple = ()
+        if status:
+            query += " WHERE ia.status = ?"
+            params = (status,)
+        query += " ORDER BY ia.created_at DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": r[0], "userId": r[1], "userEmail": r[2], "userAccountName": r[3],
+                "applicantName": r[4], "firm": r[5], "status": r[6],
+                "createdAt": r[7], "decidedAt": r[8],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/investor-applications/{application_id}/decide")
+def admin_decide_investor_application(
+    application_id: str, req: InvestorDecisionRequest,
+    _admin=Depends(require_admin), _csrf=Depends(require_csrf),
+):
+    if req.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
+    new_status = "approved" if req.action == "approve" else "rejected"
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id FROM investor_applications WHERE id = ?", (application_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Application not found")
+        conn.execute(
+            "UPDATE investor_applications SET status = ?, decided_at = ? WHERE id = ?",
+            (new_status, int(time.time()), application_id),
+        )
+        conn.commit()
+        return {"status": new_status}
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/projects")
+def admin_list_projects(_admin=Depends(require_admin)):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT p.id, p.owner_user_id, u.email, p.status, p.published_at, p.updated_at, p.data "
+            "FROM projects p LEFT JOIN users u ON u.id = p.owner_user_id ORDER BY p.updated_at DESC"
+        ).fetchall()
+        out = []
+        for r in rows:
+            try:
+                data = json.loads(r[6])
+            except (ValueError, TypeError):
+                data = {}
+            out.append({
+                "id": r[0], "ownerUserId": r[1], "ownerEmail": r[2], "status": r[3],
+                "publishedAt": r[4], "updatedAt": r[5], "name": data.get("name") or data.get("title"),
+            })
+        return out
     finally:
         conn.close()
 
