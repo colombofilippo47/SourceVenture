@@ -164,8 +164,8 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-head h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
-.sv-brand{display:inline-flex;align-items:center;gap:9px;}
-.sv-mark{flex:none;color:var(--on-surface);}
+.sv-brand{display:inline-flex;align-items:center;gap:8px;}
+.sv-mark{flex:none;color:var(--on-surface);display:block;}
 .sv-wordmark{font-family:var(--font-display);font-weight:700;letter-spacing:-.02em;}
 .sn-newbtn{padding:14px;}
 .sn-links{flex:1;padding:8px 0;overflow-y:auto;}
@@ -655,16 +655,33 @@ function toggleTheme(){
    the current text colour so it works in both themes with no second asset,
    and adds no network request. Two offset chevron slabs forming an "S",
    with the figure/person dot at the pivot. */
+// Brand mark. Drop the real logo file at frontend/assets/logo.svg (or .png)
+// and it renders here automatically; until that file exists this returns
+// nothing and the wordmark stands alone. An earlier hand-traced SVG
+// approximation lived here and was removed — it was visibly not the real
+// mark, and a wrong logo is worse than no logo.
+var LOGO_SRC = "assets/logo.svg";
+var LOGO_AVAILABLE = false;  // set by probeLogo() at startup
 function logoMarkHtml(size){
+  if(!LOGO_AVAILABLE) return "";
   var s = size || 22;
-  return '<svg class="sv-mark" width="' + s + '" height="' + s + '" viewBox="0 0 48 48" fill="none" aria-hidden="true">' +
-    '<path d="M30 4 L8 4 L20 16 L8 16 L8 24 L30 24 L18 12 L30 12 Z" fill="currentColor"/>' +
-    '<path d="M18 44 L40 44 L28 32 L40 32 L40 24 L18 24 L30 36 L18 36 Z" fill="currentColor"/>' +
-    '<circle cx="24" cy="24" r="4.2" fill="currentColor"/>' +
-    '</svg>';
+  return '<img class="sv-mark" src="' + LOGO_SRC + '" width="' + s + '" height="' + s + '" alt="" />';
+}
+function probeLogo(){
+  // Try .svg, then .png. Re-renders the current view once one is found so
+  // the mark appears without a manual refresh.
+  ["assets/logo.svg", "assets/logo.png"].forEach(function(src){
+    var img = new Image();
+    img.onload = function(){
+      if(LOGO_AVAILABLE) return;
+      LOGO_SRC = src; LOGO_AVAILABLE = true;
+      if(typeof router === "function") router();
+    };
+    img.src = src;
+  });
 }
 function brandHtml(href){
-  var inner = '<span class="sv-brand">' + logoMarkHtml(20) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  var inner = '<span class="sv-brand">' + logoMarkHtml(15) + '<span class="sv-wordmark">SourceVenture</span></span>';
   return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
 }
 
@@ -2293,6 +2310,7 @@ function initCookieBanner(){
 async function initApp(){
   startSitewideDots();
   initCookieBanner();
+  probeLogo();
   await ensureMe();
   await router();
 }
