@@ -178,6 +178,20 @@ def get_db():
             updated_at INTEGER NOT NULL
         )"""
     )
+    # First-party analytics. Deliberately minimal and privacy-preserving:
+    # an event name, an optional project id, and a coarse timestamp. No IP,
+    # no user agent, no cross-site identifier, no per-user row — the
+    # checklist's "minimize collection of personal data" point is easier to
+    # honour by simply never collecting it than by deleting it later.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS analytics_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            project_id TEXT,
+            created_at INTEGER NOT NULL
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_name_time ON analytics_events (name, created_at)")
     return conn
 
 
@@ -394,6 +408,10 @@ def verify_email(token: str):
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request, response: Response):
     check_rate_limit("login", client_ip(request), limit=10, window_seconds=600)
+    # Per-IP alone doesn't stop a distributed brute force against one
+    # specific account (botnet, rotating proxies) — this second, tighter
+    # limiter keyed on the target email catches that case too.
+    check_rate_limit("login_account", req.email.lower(), limit=8, window_seconds=600)
     conn = get_db()
     try:
         row = conn.execute(
@@ -942,3 +960,78 @@ async def match_investors(req: InvestorMatchRequest, current_user=Depends(get_cu
             continue
         matches.append({**p, "matchScore": m.get("score"), "matchReason": m.get("reason")})
     return {"matches": matches}
+
+
+# ------------------------------------------------------------- analytics
+# Deliberately small: one write endpoint the frontend calls, one read
+# endpoint the project owner calls. Events are an allowlisted enum rather
+# than free text so a client can't fill the table with arbitrary strings,
+# and nothing identifying is stored (see the analytics_events schema).
+ANALYTICS_EVENTS = {
+    "page_view",
+    "signup_completed",
+    "project_published",
+    "coach_message_sent",
+    "rating_requested",
+    "investor_match_searched",
+    "investor_application_submitted",
+    "summary_generated",
+}
+
+
+class AnalyticsEventIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    projectId: Optional[str] = Field(default=None, max_length=80)
+
+
+@app.post("/api/analytics/event")
+def record_analytics_event(event: AnalyticsEventIn, request: Request):
+    if event.name not in ANALYTICS_EVENTS:
+        raise HTTPException(status_code=400, detail="Unknown event name")
+    # Public (no auth) so the landing page can record a page_view before
+    # anyone signs in — rate-limited per IP so it can't be used to flood
+    # the table. The IP is used only for this in-memory counter, never
+    # stored with the event.
+    check_rate_limit("analytics", client_ip(request), limit=120, window_seconds=3600)
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO analytics_events (name, project_id, created_at) VALUES (?, ?, ?)",
+            (event.name, event.projectId, int(time.time())),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/analytics/summary")
+def analytics_summary(days: int = 30, current_user=Depends(get_current_user)):
+    days = max(1, min(days, 365))
+    since = int(time.time()) - days * 86400
+    conn = get_db()
+    try:
+        # Platform-wide totals per event type.
+        totals = {
+            row[0]: row[1]
+            for row in conn.execute(
+                "SELECT name, COUNT(*) FROM analytics_events WHERE created_at >= ? GROUP BY name",
+                (since,),
+            ).fetchall()
+        }
+        # Per-project counts, scoped to the caller's own projects only —
+        # one founder must not be able to read another's traffic.
+        mine = conn.execute(
+            """SELECT a.project_id, a.name, COUNT(*)
+               FROM analytics_events a
+               JOIN projects p ON p.id = a.project_id
+               WHERE a.created_at >= ? AND p.owner_user_id = ?
+               GROUP BY a.project_id, a.name""",
+            (since, current_user["id"]),
+        ).fetchall()
+        per_project: dict = {}
+        for project_id, name, count in mine:
+            per_project.setdefault(project_id, {})[name] = count
+        return {"days": days, "totals": totals, "myProjects": per_project}
+    finally:
+        conn.close()

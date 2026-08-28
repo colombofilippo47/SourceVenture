@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- CSP: this app is a single file that builds its UI with inline <script>
+     and innerHTML, so 'unsafe-inline' is unavoidable without a rewrite.
+     The load-bearing part is the allowlist below — it pins exactly which
+     origins the page may talk to, so an injected script can't exfiltrate
+     to an attacker-controlled host. connect-src covers the backend
+     (localhost in dev; add your deployed API origin here) and GitHub's
+     public API; everything else is denied by default-src 'self'. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com; base-uri 'self'; form-action 'self'" />
+<!-- frame-ancestors is deliberately absent: it's ignored in a <meta> CSP and
+     only works as a real HTTP header. Set it (or X-Frame-Options) on whatever
+     serves this file in production — the API already sends X-Frame-Options. -->
 <title>SourceVenture — Venture Engineering</title>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
@@ -137,7 +148,11 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
 @media(max-width:900px){#sidenav{display:none;}}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
-.sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--tertiary));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(94,106,210,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;flex:none;}
+.sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--tertiary));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(94,106,210,.35);display:flex;align-items:center;justify-content:center;color:#fff;flex:none;}
+.sv-brand{display:inline-flex;align-items:center;gap:9px;}
+.sv-mark{flex:none;color:var(--on-surface);}
+.sv-wordmark{font-family:var(--font-display);font-weight:700;letter-spacing:-.02em;}
+.sn-logo .sv-mark{color:#fff;}
 .sn-head h1{font-size:16px;}
 .sn-head p{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);margin-top:1px;}
 .sn-newbtn{padding:14px;}
@@ -449,6 +464,24 @@ function toggleTheme(){
     el.textContent = next === "light" ? "dark_mode" : "light_mode";
   });
 }
+/* ---------------- brand mark ----------------
+   Inline SVG rather than an image file: stays crisp at any size, inherits
+   the current text colour so it works in both themes with no second asset,
+   and adds no network request. Two offset chevron slabs forming an "S",
+   with the figure/person dot at the pivot. */
+function logoMarkHtml(size){
+  var s = size || 22;
+  return '<svg class="sv-mark" width="' + s + '" height="' + s + '" viewBox="0 0 48 48" fill="none" aria-hidden="true">' +
+    '<path d="M30 4 L8 4 L20 16 L8 16 L8 24 L30 24 L18 12 L30 12 Z" fill="currentColor"/>' +
+    '<path d="M18 44 L40 44 L28 32 L40 32 L40 24 L18 24 L30 36 L18 36 Z" fill="currentColor"/>' +
+    '<circle cx="24" cy="24" r="4.2" fill="currentColor"/>' +
+    '</svg>';
+}
+function brandHtml(href){
+  var inner = '<span class="sv-brand">' + logoMarkHtml(20) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
+}
+
 function themeToggleHtml(){
   var icon = currentTheme() === "light" ? "dark_mode" : "light_mode";
   return '<button class="tb-icon theme-toggle" title="Toggle theme" onclick="toggleTheme()"><span class="material-symbols-outlined">' + icon + '</span></button>';
@@ -531,6 +564,7 @@ async function submitSignup(){
     if(!res.ok) throw new Error(data.detail || "Could not create account");
     setAuth(data.user);
     closeModal();
+    track("signup_completed");
     showToast("Welcome, " + data.user.name + ".");
     window.location.hash = "#/dashboard";
     router();
@@ -651,6 +685,20 @@ async function fetchRepoContext(owner, repo){
   return ctx;
 }
 
+/* ---------------- analytics (first-party, no third-party tracker) ----------------
+   Fire-and-forget: a failed analytics call must never surface to the user
+   or block whatever they were actually doing. Event names are validated
+   server-side against an allowlist. */
+function track(name, projectId){
+  try{
+    fetch(API_BASE + "/api/analytics/event", {
+      method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name: name, projectId: projectId || null }),
+      keepalive: true
+    }).catch(function(){});
+  }catch(e){}
+}
+
 /* ---------------- Coach API (proxied through the Python backend) ---------------- */
 async function callClaude(messages, system, maxTokens){
   var res = await fetch(API_BASE + "/api/coach", {
@@ -722,6 +770,7 @@ async function router(){
   }
   if(!matched) matched = { name:"landing" };
   window.scrollTo(0,0);
+  track("page_view", matched.name === "project" || matched.name === "coach" ? param : null);
 
   var root = $("root");
   if(matched.name === "landing"){
@@ -731,7 +780,7 @@ async function router(){
   }
 
   if(!isLoggedIn()){
-    root.innerHTML = '<div id="topbar"><div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a></div></div>' +
+    root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
       '<div class="canvas" style="padding-top:100px;text-align:center;">' +
         '<h1 class="page-title">Sign in required</h1>' +
         '<p class="page-sub" style="margin:0 auto 24px;">Create a free account or sign in to continue.</p>' +
@@ -764,7 +813,7 @@ function errorBlock(e){
 
 function appShellHtml(routeName){
   return '<div id="topbar">' +
-      '<div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a><div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+      '<div class="tb-left">' + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
@@ -774,7 +823,7 @@ function appShellHtml(routeName){
     '</div>' +
     '<div class="app-layout">' +
       '<nav id="sidenav">' +
-        '<div class="sn-head"><div class="sn-logo">SV</div><div><h1>SourceVenture</h1><p class="mono">Venture Engineering</p></div></div>' +
+        '<div class="sn-head"><div class="sn-logo">' + logoMarkHtml(22) + '</div><div><h1>SourceVenture</h1><p class="mono">Venture Engineering</p></div></div>' +
         '<div class="sn-newbtn"><button class="btn btn-primary btn-block" onclick="nav(\'#/new\')"><span class="material-symbols-outlined" style="font-size:16px;">add</span>New Project</button></div>' +
         '<div class="sn-links">' +
           '<a data-r="dashboard" href="#/dashboard"><span class="material-symbols-outlined">dashboard</span>Overview</a>' +
@@ -803,7 +852,7 @@ async function renderLanding(root){
   var published = await loadAllPublishedProjects();
   root.innerHTML =
   '<nav id="landing-nav"><div class="wrap">' +
-    '<div class="tb-title">SourceVenture</div>' +
+    brandHtml(null) +
     '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
     '<div style="display:flex;gap:10px;align-items:center;">' +
       themeToggleHtml() +
@@ -968,6 +1017,7 @@ async function submitNewProject(){
 
   try{
     await saveProject(project);
+    track("project_published", project.id);
     showToast(project.name + " is live.");
     nav("#/coach/" + project.id);
   }catch(e){
@@ -1012,7 +1062,7 @@ async function renderProjectDetail(main, id){
 /* ============================================================
    AI COACH
    ============================================================ */
-let COACH = { project:null, messages:[], usage:[], repoCtx:null };
+let COACH = { project:null, messages:[], usage:[], repoCtx:null, rating:null };
 
 async function renderCoach(main, id){
   var p = await loadProject(id);
@@ -1148,6 +1198,7 @@ async function loadAndRenderRating(p){
   try{
     var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rating");
     var data = await res.json();
+    COACH.rating = data.rating || null;
     block.innerHTML = ratingBlockHtml(data.rating, p);
   }catch(e){
     block.innerHTML = ratingBlockHtml(null, p);
@@ -1160,14 +1211,16 @@ async function runRating(id){
   try{
     if(!COACH.repoCtx && COACH.project){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
     var repoText = COACH.repoCtx ? (COACH.repoCtx.readme || COACH.repoCtx.description || "") : "";
+    track("rating_requested", id);
     var data = await rateProject(COACH.project, repoText);
+    COACH.rating = data;
     block.innerHTML = ratingBlockHtml(data, COACH.project);
   }catch(e){
     block.innerHTML = '<p class="muted" style="font-size:12px;">' + escapeHtml(e.message) + '</p><button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="runRating(' + "'" + id + "'" + ')">Try again</button>';
   }
 }
 
-function coachSystemPrompt(p, ctx){
+function coachSystemPrompt(p, ctx, rating){
   var repoBlock = "No public repo data could be fetched for this session — coach on the pitch alone.";
   if(ctx && (ctx.description || ctx.readme)){
     repoBlock =
@@ -1181,10 +1234,29 @@ function coachSystemPrompt(p, ctx){
 'README (truncated):\n' + (ctx.readme || "(none found)") + '\n' +
 '</repo_data>';
   }
+  // The council rating already exists server-side — feeding it to the coach
+  // means the chat and the scorecard stop contradicting each other, and the
+  // coach can work from what the judges actually flagged instead of
+  // re-deriving its own opinion from scratch every session.
+  var ratingBlock = "";
+  if(rating && rating.scores){
+    ratingBlock = "\n\n<council_rating>\nA 3-judge council (VC, technical due-diligence, growth analyst) already scored this project. Treat these as your colleagues' assessments — build on them, don't silently contradict them without saying why.\n" +
+      "overall: " + rating.overall + "/100\n" +
+      "problem & market: " + rating.scores.problem_market + "\n" +
+      "differentiation: " + rating.scores.differentiation + "\n" +
+      "execution signal: " + rating.scores.execution_signal + "\n" +
+      "risk resilience: " + rating.scores.risk_resilience + "\n" +
+      (rating.verdict ? "verdict: " + rating.verdict + "\n" : "") +
+      (rating.biggest_risk ? "biggest risk: " + rating.biggest_risk + "\n" : "") +
+      ((rating.improvements||[]).length ? "open improvements the panel flagged:\n- " + rating.improvements.join("\n- ") + "\n" : "") +
+      "</council_rating>";
+  }
+
   return "You are the SourceVenture Coach — a direct, technically credible mentor for a solo or small-team founder. This conversation is private; it is never shown to investors. " +
     "Ground your advice in the real project details below whenever relevant. When suggesting code changes, use short fenced code blocks. Be honest about weaknesses, but constructive. Keep replies tight. Never claim to have taken actions you didn't take (you cannot run code, browse further, or push commits).\n\n" +
+    "Style: lead with the answer, not a preamble. Prefer one specific, doable action over a list of five generic ones. If the founder's question is vague, ask one sharp clarifying question instead of guessing at length. Don't flatter — 'that's a great question' adds nothing.\n\n" +
     "When the founder asks you to evaluate, assess, or review the startup idea itself (not just the code), structure your answer under these headers, in this order: **Problem & market** (is the problem real, how big, who has it), **Differentiation** (what's the actual edge, and against whom), **Execution signal** (what the repo/pitch shows about ability to ship — cite specifics, don't guess), **Biggest risk** (the single thing most likely to kill this), **Next concrete step** (one thing to do this week, not a vague list). Ground every claim in the pitch or repo data given to you; say explicitly when you don't have enough information to judge something rather than inventing traction, market size, or user numbers.\n\n" +
-    "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\n\n" + repoBlock;
+    "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\n\n" + repoBlock + ratingBlock;
 }
 
 async function sendCoachMessage(){
@@ -1197,6 +1269,7 @@ async function sendCoachMessage(){
   }
   input.value = "";
   appendCoachMsg("user", text);
+  track("coach_message_sent", COACH.project ? COACH.project.id : null);
 
   if(STATE.me.plan !== "pro"){
     COACH.usage.push(Date.now());
@@ -1213,7 +1286,7 @@ async function sendCoachMessage(){
 
   try{
     if(!COACH.repoCtx){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
-    var system = coachSystemPrompt(COACH.project, COACH.repoCtx);
+    var system = coachSystemPrompt(COACH.project, COACH.repoCtx, COACH.rating);
     var apiMessages = COACH.messages.filter(function(m){ return m.role==="user"||m.role==="assistant"; }).map(function(m){ return {role:m.role, content:m.content}; });
     var reply = await callClaude(apiMessages, system);
     var el = document.getElementById("coach-typing"); if(el) el.remove();
@@ -1363,6 +1436,7 @@ async function findInvestorMatches(){
     });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || "Could not find matches");
+    track("investor_match_searched");
     if(!data.matches || !data.matches.length){
       results.innerHTML = '<p class="muted" style="font-size:13px;">No strong matches in the current directory yet — try broadening your description.</p>';
     } else {
@@ -1442,6 +1516,7 @@ async function submitInvestorApp(){
   try{
     await applyAsInvestor(name, firm);
     closeModal();
+    track("investor_application_submitted");
     showToast("Application submitted — you'll get access once it's reviewed and approved.");
     router();
   }catch(e){
