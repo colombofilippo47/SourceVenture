@@ -165,7 +165,7 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
 .sv-brand{display:inline-flex;align-items:center;gap:8px;}
-.sv-mark{flex:none;display:block;}
+.sv-mark{flex:none;display:block;width:auto;}
 .sv-mark-light{display:none;}
 :root[data-theme="light"] .sv-mark-dark{display:none;}
 :root[data-theme="light"] .sv-mark-light{display:block;}
@@ -463,7 +463,7 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
 .reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
 .reveal.in{opacity:1;filter:blur(0);transform:translateY(0) scale(1);}
-.magnetic{transition:transform .25s var(--ease-out-expo);will-change:transform;}
+.magnetic{transition:transform .25s var(--ease-out-expo);}
 @media(prefers-reduced-motion:reduce){.reveal{opacity:1;filter:none;transform:none;transition:none;}}
 
 /* ---------- help widget ---------- */
@@ -665,13 +665,16 @@ function toggleTheme(){
 // slabs to the light theme's ink while keeping the teal dot untouched. Both
 // are emitted every time and CSS shows whichever matches the active theme,
 // so toggling themes needs no JS and no re-render.
+// `size` is the mark's HEIGHT; width follows its natural 3:4 proportions.
+// (Forcing a square here is what made it look undersized before — the file
+// was padded to a square, so a nominal 15px box held an ~11px mark.)
 function logoMarkHtml(size){
   var s = size || 22;
-  return '<img class="sv-mark sv-mark-dark" src="assets/logo.png" width="' + s + '" height="' + s + '" alt="" />' +
-         '<img class="sv-mark sv-mark-light" src="assets/logo-light.png" width="' + s + '" height="' + s + '" alt="" />';
+  return '<img class="sv-mark sv-mark-dark" src="assets/logo.png" height="' + s + '" alt="" />' +
+         '<img class="sv-mark sv-mark-light" src="assets/logo-light.png" height="' + s + '" alt="" />';
 }
 function brandHtml(href){
-  var inner = '<span class="sv-brand">' + logoMarkHtml(15) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  var inner = '<span class="sv-brand">' + logoMarkHtml(19) + '<span class="sv-wordmark">SourceVenture</span></span>';
   return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
 }
 
@@ -1165,7 +1168,12 @@ const ROUTES = [
   { test:/^#\/admin$/, name:"admin" }
 ];
 
+// Bumped on every navigation. Render functions that await before touching
+// the DOM compare against it so a slow render from a page the user already
+// left can't write over the new one (or throw on elements it removed).
+var __renderToken = 0;
 async function router(){
+  var myToken = ++__renderToken;
   if(__authCanvasStop){ __authCanvasStop(); __authCanvasStop = null; }
   var hash = window.location.hash || "#/";
   var matched = null, param = null;
@@ -1227,6 +1235,10 @@ async function router(){
     else if(matched.name === "settings") await renderSettings(main, param || "account");
     else if(matched.name === "admin") await renderAdmin(main);
   }catch(e){
+    // Only surface the failure if this render is still the current one —
+    // otherwise it belongs to a page the user has already navigated away
+    // from, and writing here would clobber the page they're now on.
+    if(myToken !== __renderToken) return;
     console.error(e);
     main.innerHTML = errorBlock(e);
   }
@@ -1891,7 +1903,11 @@ async function findInvestorMatches(){
 }
 
 function renderDirList(published, open, approved){
+  // Bail if the container is gone: renderInvestors awaits several fetches
+  // before getting here, and a fast navigation in the meantime replaces
+  // #root wholesale — the stale render would otherwise throw on null.
   var el = $("dir-list");
+  if(!el) return;
   var canSeeReal = open && approved;
 
   if(published.length === 0){
@@ -2249,30 +2265,9 @@ document.addEventListener("mousemove", function(e){
   el.style.setProperty("--my", (e.clientY - r.top) + "px");
 });
 
-// Magnetic buttons: any .magnetic element nudges toward the cursor within a
-// small radius, springs back on leave. Delegated on document (like the
-// .spotlight handler above) so it works on buttons added by any route's
-// render function without a separate init/re-init step per navigation.
-document.addEventListener("mousemove", function(e){
-  document.querySelectorAll(".magnetic").forEach(function(el){
-    var r = el.getBoundingClientRect();
-    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    var dx = e.clientX - cx, dy = e.clientY - cy;
-    var dist = Math.hypot(dx, dy);
-    var radius = Math.max(r.width, r.height) * 1.6;
-    if(dist < radius){
-      var pull = (1 - dist / radius) * 0.2;
-      var tx = Math.max(-12, Math.min(12, dx * pull));
-      var ty = Math.max(-12, Math.min(12, dy * pull));
-      el.style.transform = "translate(" + tx + "px," + ty + "px)";
-    } else if(el.style.transform){
-      el.style.transform = "";
-    }
-  });
-});
-document.addEventListener("mouseleave", function(){
-  document.querySelectorAll(".magnetic").forEach(function(el){ el.style.transform = ""; });
-});
+// (The magnetic-hover effect that pulled buttons toward the cursor was
+// removed — buttons now stay put. The .magnetic class is left on the
+// markup as a no-op hook in case a subtler version is wanted later.)
 
 // Scroll-reveal: fade+rise elements marked .reveal into place once, on entry.
 var revealObserver = new IntersectionObserver(function(entries){
