@@ -1466,3 +1466,53 @@ def analytics_summary(days: int = 30, current_user=Depends(get_current_user)):
         return {"days": days, "totals": totals, "myProjects": per_project}
     finally:
         conn.close()
+
+
+@app.get("/api/analytics/workspace/{project_id}")
+def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(get_current_user)):
+    # One project's own dashboard: a daily time series (for a sparkline/chart)
+    # plus per-event totals and the rating trend, scoped to its owner only —
+    # same ownership check as every other per-project read below.
+    days = max(1, min(days, 365))
+    since = int(time.time()) - days * 86400
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if row[0] != current_user["id"]:
+            raise HTTPException(status_code=403, detail="Not your project")
+
+        totals = {
+            name: count
+            for name, count in conn.execute(
+                "SELECT name, COUNT(*) FROM analytics_events WHERE project_id = ? AND created_at >= ? GROUP BY name",
+                (project_id, since),
+            ).fetchall()
+        }
+        # Bucket by UTC day for a simple daily series the frontend can chart
+        # without doing its own date math.
+        daily_rows = conn.execute(
+            """SELECT date(created_at, 'unixepoch') AS day, name, COUNT(*)
+               FROM analytics_events WHERE project_id = ? AND created_at >= ?
+               GROUP BY day, name ORDER BY day ASC""",
+            (project_id, since),
+        ).fetchall()
+        daily: dict = {}
+        for day, name, count in daily_rows:
+            daily.setdefault(day, {})[name] = count
+
+        rating_row = conn.execute(
+            "SELECT overall, scores, updated_at FROM project_ratings WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        rating = None
+        if rating_row:
+            rating = {
+                "overall": rating_row[0],
+                "scores": json.loads(rating_row[1]) if rating_row[1] else None,
+                "updatedAt": rating_row[2],
+            }
+        return {"days": days, "totals": totals, "daily": daily, "rating": rating}
+    finally:
+        conn.close()
