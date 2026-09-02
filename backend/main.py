@@ -54,6 +54,7 @@ from urllib.parse import urlencode
 from typing import List, Optional
 
 import httpx
+import stripe
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,6 +89,18 @@ PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/google/callback")
+# Real billing (2026-09-03). Same unset-means-quietly-unavailable pattern
+# as the other third-party keys above — until these are set, the checkout
+# endpoint returns a clean 503 rather than crashing. STRIPE_PRICE_ID is the
+# recurring $15/mo SourceVenture Pro price (not the product id — Checkout
+# needs the price, e.g. price_..., not prod_...). STRIPE_WEBHOOK_SECRET is
+# per-endpoint: Stripe generates a distinct one for whichever URL you add
+# under Developers -> Webhooks, not the same as the secret key.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
 DB_PATH = Path(__file__).parent / "data.db"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
@@ -179,7 +192,14 @@ def init_db():
                      "ALTER TABLE users ADD COLUMN referred_by_user_id TEXT",
                      "ALTER TABLE users ADD COLUMN referral_bonus_remaining INTEGER NOT NULL DEFAULT 0",
                      "ALTER TABLE users ADD COLUMN referral_milestone3_awarded INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0"):
+                     "ALTER TABLE users ADD COLUMN referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0",
+                     # Real billing (2026-09-03) — set once a Checkout session
+                     # completes; the webhook is the only writer of `plan`
+                     # from here on for accounts with a stripe_customer_id
+                     # (the manual admin toggle stays available for accounts
+                     # that were never through Stripe).
+                     "ALTER TABLE users ADD COLUMN stripe_customer_id TEXT",
+                     "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
@@ -189,6 +209,7 @@ def init_db():
         # on the many NULL values from password-only accounts.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -1045,12 +1066,11 @@ class PlanUpdateRequest(BaseModel):
 
 @app.post("/api/admin/users/{user_id}/plan")
 def admin_set_user_plan(user_id: str, req: PlanUpdateRequest, _admin=Depends(require_admin), _csrf=Depends(require_csrf)):
-    # Manual stand-in for real billing: there is no Stripe integration yet
-    # (see backend/README.md), so this is how a founder actually gets
-    # moved to Pro today — an admin flips it by hand after being paid
-    # out-of-band. Replace this with a Stripe webhook handler that does the
-    # same UPDATE once real payments are connected; nothing else in the app
-    # needs to change since every gate already reads current_user["plan"].
+    # Manual override, kept alongside real Stripe billing below for two
+    # cases Stripe doesn't cover: comping someone Pro without a real
+    # subscription, and unsticking an account if a webhook ever gets
+    # lost. For anyone who actually pays, the webhook handler is the one
+    # that normally keeps `plan` in sync — this just writes the same column.
     if req.plan not in ("free", "pro"):
         raise HTTPException(status_code=400, detail="plan must be 'free' or 'pro'")
     conn = get_db()
@@ -1063,6 +1083,127 @@ def admin_set_user_plan(user_id: str, req: PlanUpdateRequest, _admin=Depends(req
         return {"plan": req.plan}
     finally:
         conn.close()
+
+
+# ----------------------------------------------------------------- billing
+# Real Stripe Checkout + a webhook that's the sole normal-path writer of
+# `plan` for any account with a stripe_customer_id. All three routes 503
+# cleanly (same pattern as Google/Resend above) until STRIPE_SECRET_KEY /
+# STRIPE_PRICE_ID / STRIPE_WEBHOOK_SECRET are set in .env.
+def _require_stripe_configured():
+    if not STRIPE_SECRET_KEY or not STRIPE_PRICE_ID:
+        raise HTTPException(status_code=503, detail="Payments aren't connected yet on this server")
+
+
+@app.post("/api/billing/checkout")
+def create_checkout_session(current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    _require_stripe_configured()
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT stripe_customer_id FROM users WHERE id = ?", (current_user["id"],)).fetchone()
+        customer_id = row[0] if row else None
+        try:
+            if not customer_id:
+                customer = stripe.Customer.create(email=current_user["email"], metadata={"user_id": current_user["id"]})
+                customer_id = customer.id
+                conn.execute("UPDATE users SET stripe_customer_id = ? WHERE id = ?", (customer_id, current_user["id"]))
+                conn.commit()
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                mode="subscription",
+                line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+                success_url=f"{PUBLIC_APP_URL}/#/settings/plan?checkout=success",
+                cancel_url=f"{PUBLIC_APP_URL}/#/settings/plan?checkout=cancel",
+                client_reference_id=current_user["id"],
+                metadata={"user_id": current_user["id"]},
+            )
+        except stripe.error.StripeError as e:
+            log.warning("stripe checkout session creation failed: %s", e)
+            raise HTTPException(status_code=502, detail="Could not start checkout — try again in a moment")
+        return {"url": session.url}
+    finally:
+        conn.close()
+
+
+@app.post("/api/billing/portal")
+def create_billing_portal_session(current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    _require_stripe_configured()
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT stripe_customer_id FROM users WHERE id = ?", (current_user["id"],)).fetchone()
+        customer_id = row[0] if row else None
+    finally:
+        conn.close()
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No billing account yet — upgrade to Pro first")
+    try:
+        session = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{PUBLIC_APP_URL}/#/settings/plan")
+    except stripe.error.StripeError as e:
+        log.warning("stripe portal session creation failed: %s", e)
+        raise HTTPException(status_code=502, detail="Could not open billing portal — try again in a moment")
+    return {"url": session.url}
+
+
+def _set_plan_by_customer_id(customer_id: str, plan: str, subscription_id: Optional[str] = None):
+    conn = get_db()
+    try:
+        if subscription_id is not None:
+            conn.execute(
+                "UPDATE users SET plan = ?, stripe_subscription_id = ? WHERE stripe_customer_id = ?",
+                (plan, subscription_id, customer_id),
+            )
+        else:
+            conn.execute("UPDATE users SET plan = ? WHERE stripe_customer_id = ?", (plan, customer_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.post("/api/billing/webhook")
+async def stripe_webhook(request: Request):
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Webhook isn't configured yet on this server")
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except (ValueError, stripe.error.SignatureVerificationError) as e:
+        log.warning("stripe webhook signature verification failed: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    # event["data"]["object"] is a StripeObject, not a plain dict — it
+    # supports [] indexing but not .get(), which raises AttributeError
+    # (caught this via a live signed-webhook test, not from reading the
+    # docs). .to_dict() gives back an actual dict so .get() works below.
+    obj = event["data"]["object"].to_dict()
+    kind = event["type"]
+    if kind == "checkout.session.completed":
+        user_id = (obj.get("metadata") or {}).get("user_id") or obj.get("client_reference_id")
+        customer_id = obj.get("customer")
+        subscription_id = obj.get("subscription")
+        if user_id and customer_id:
+            conn = get_db()
+            try:
+                conn.execute(
+                    "UPDATE users SET plan = 'pro', stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?",
+                    (customer_id, subscription_id, user_id),
+                )
+                conn.commit()
+                log.info("stripe checkout completed: user_id=%s customer=%s", user_id, customer_id)
+            finally:
+                conn.close()
+    elif kind == "customer.subscription.updated":
+        status = obj.get("status")
+        # active/trialing = paying (or in a trial) -> Pro. Anything else
+        # (past_due, unpaid, canceled, incomplete_expired) -> back to Free;
+        # Stripe's own retry/dunning emails handle chasing a failed card,
+        # this just reflects whatever the subscription's current status is.
+        plan = "pro" if status in ("active", "trialing") else "free"
+        _set_plan_by_customer_id(obj.get("customer"), plan, obj.get("id"))
+    elif kind == "customer.subscription.deleted":
+        _set_plan_by_customer_id(obj.get("customer"), "free", None)
+
+    return {"received": True}
 
 
 @app.get("/api/admin/projects")

@@ -61,8 +61,13 @@ talks to it over HTTP.
 | `sessions`             | session cookie value → user_id, with an expiry                  |
 | `projects`             | id, owner_user_id, status, timestamps, JSON `data`               |
 | `investor_applications`| id, user_id (unique), name, firm, status (pending/approved), timestamps |
-| `project_ratings`      | project_id → last council rating (scores, verdict, risk, improvements) |
+| `project_ratings`      | project_id → last council rating (scores, verdict, risk, improvements) — surfaced in the UI as "Source Score" |
 | `analytics_events`     | event name, optional project_id, timestamp — no IP, no user agent, no per-user row |
+| `business_plans`       | project_id → last AI-generated business plan (JSON sections + missing-information list), Pro-only |
+
+`users` also carries First Drop columns (2026-09-02/03): `plan` (`free`/`pro`),
+`referral_code`, `referred_by_user_id`, `referral_bonus_remaining` (+ two
+one-shot milestone flags), and `stripe_customer_id` / `stripe_subscription_id`.
 
 ## Run locally
 
@@ -81,38 +86,50 @@ an explicit origin, `*` won't work. Set `COOKIE_SECURE=true` once you're
 serving both sides over HTTPS.
 
 **AI provider**: Gemini (free tier) is the primary provider for the coach,
-the rating council, and investor matching — `GEMINI_API_KEY` /
-`GEMINI_MODEL` (default `gemini-2.5-flash`). Anthropic is only reached as a
-paid last-resort fallback if Gemini is unset or a call fails
-(`ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`). Set neither and every AI route
-returns a 503 with a clear message instead of erroring confusingly.
+the rating council, investor matching, and the business plan —
+`GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-2.5-flash`). Anthropic is
+only reached as a paid last-resort fallback if Gemini is unset or a call
+fails (`ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`). Set neither and every AI
+route returns a 503 with a clear message instead of erroring confusingly.
+
+**Billing**: real Stripe Checkout + a webhook that's the normal-path writer
+of `plan` (`STRIPE_SECRET_KEY` / `STRIPE_PRICE_ID` / `STRIPE_WEBHOOK_SECRET`
+in `.env` — see `.env.example` for where to find each in the Stripe
+dashboard). Unset = `/api/billing/*` returns a clean 503; an admin can
+still flip an account's plan by hand via `POST
+/api/admin/users/{id}/plan` regardless of Stripe being connected.
 
 ## Endpoints
 
 | method | path              | auth | purpose                          |
 |--------|-------------------|------|-----------------------------------|
-| POST   | `/api/auth/signup`| no   | create an account, sets the session cookie |
+| POST   | `/api/auth/signup`| no   | create an account, sets the session cookie (optional `ref` = referrer's code) |
 | POST   | `/api/auth/login` | no   | sets the session cookie           |
 | POST   | `/api/auth/logout`| yes + CSRF | invalidates and clears the cookie |
-| GET    | `/api/auth/me`    | yes  | current user                      |
+| GET    | `/api/auth/me`    | yes  | current user (includes `plan`, `referralCode`, `referralBonusRemaining`) |
 | GET    | `/api/auth/verify/{token}` | no | confirms an account's email |
-| GET    | `/api/projects`   | no   | published projects (public) — `investorSummary` stripped unless owner/approved investor |
+| GET    | `/api/projects`   | no   | published projects (public) — `investorSummary`/`investorSummaryDraft` stripped unless owner/approved investor |
 | GET    | `/api/projects/mine` | yes | the current user's own projects |
-| GET    | `/api/projects/{id}` | no | one project — same `investorSummary` stripping |
-| PUT    | `/api/projects/{id}` | yes + CSRF | create/update (owner only); fires an automatic re-rate in the background on real pitch changes |
-| POST   | `/api/projects/{id}/rate` | yes + CSRF | 3-judge council + chairman synthesis, stored server-side |
+| GET    | `/api/projects/{id}` | no | one project — same stripping; draft is owner-only even for approved investors |
+| PUT    | `/api/projects/{id}` | yes + CSRF | create/update (owner only); validated fields (name/pitch required, repo/problem/team optional — GitHub is never required); fires an automatic re-rate in the background on real pitch changes; awards referral milestones on first publish |
+| POST   | `/api/projects/{id}/rate` | yes + CSRF | 3-judge council + chairman synthesis ("Source Score"), stored server-side |
 | GET    | `/api/projects/{id}/rating` | no | the last stored council rating |
-| POST   | `/api/coach`      | yes + CSRF | proxies one turn to the AI, 25 msgs / rolling 24h free tier |
+| POST   | `/api/projects/{id}/business-plan` | yes + CSRF, **Pro only** | AI-generated business plan grounded in pitch/repo/rating; 403 for free plan |
+| GET    | `/api/projects/{id}/business-plan` | yes | the last generated business plan, if any |
+| POST   | `/api/coach`      | yes + CSRF | proxies one turn to the AI — 10 msgs/24h free, 300/24h pro, falls back to `referral_bonus_remaining` once the plan's window is spent |
 | POST   | `/api/investors/apply` | yes + CSRF | submit an investor application (starts `pending`) |
 | GET    | `/api/investors/me` | yes | current user's application status |
 | GET    | `/api/investors/directory` | yes | full published-project list — 403 unless the threshold is met AND the caller is `approved` |
 | POST   | `/api/investors/match` | yes + CSRF | AI-ranks published projects against an investor's stated interest/amount |
 | POST   | `/api/analytics/event` | no   | records one allowlisted event name (+ optional project id). Rate-limited per IP; stores nothing identifying |
 | GET    | `/api/analytics/summary` | yes | platform-wide event totals + per-project counts **for the caller's own projects only** |
-
-**Approving an investor application**: no admin UI exists yet — approve
-manually: `sqlite3 data.db "UPDATE investor_applications SET
-status='approved', decided_at=strftime('%s','now') WHERE user_id='<id>'"`.
+| GET    | `/api/analytics/workspace/{id}` | yes, owner only | one project's daily event time series + its rating trend |
+| POST   | `/api/billing/checkout` | yes + CSRF | creates a Stripe Checkout session for SourceVenture Pro, returns `{url}` to redirect to |
+| POST   | `/api/billing/portal` | yes + CSRF | creates a Stripe Billing Portal session (manage/cancel), returns `{url}` |
+| POST   | `/api/billing/webhook` | no (Stripe signature) | keeps `plan` in sync with the real subscription state |
+| GET    | `/api/admin/overview` · `/users` · `/projects` | admin | read-only operator views |
+| POST   | `/api/admin/investor-applications/{id}/decide` | admin + CSRF | approve/reject an investor application |
+| POST   | `/api/admin/users/{id}/plan` | admin + CSRF | manual Free/Pro override — the pre-Stripe (and still-available) way to comp an account |
 
 **Backups**: `python backup_db.py` copies `data.db` into `backups/` with a
 timestamp, keeping the 14 most recent by default (`--keep N` to change).
