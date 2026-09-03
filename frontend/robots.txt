@@ -1,0 +1,32 @@
+# SourceVenture is a client-side SPA behind hash routing (#/...) — search
+# engines and AI crawlers only ever see this one static index.html, plus
+# whatever a headless-rendering crawler executes client-side. Everything
+# behind auth (dashboard, coach, settings) is meaningless to index anyway
+# since it 401s without a session; only the public landing/legal pages are
+# worth crawling.
+User-agent: *
+Allow: /
+
+# Known AI answer-engine / assistant crawlers — explicitly allowed rather
+# than left to each bot's own default, since the ask was specifically to
+# be discoverable in AI Overviews / AI browsing assistants, not just
+# classic search.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://sourceventure.com/sitemap.xml

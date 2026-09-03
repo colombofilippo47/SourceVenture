@@ -1,0 +1,20 @@
+# SourceVenture
+
+> SourceVenture is a platform for startup founders to publish their project, get an AI-generated Source Score (0-100) and analysis of its strengths and weaknesses, and work privately with an AI counselor to improve it — before optionally sharing an approved, founder-reviewed summary with investors.
+
+SourceVenture is built for early-stage founders and developers, not for browsing or discovering other people's startups. The core loop is: publish a project (pitch, problem, team — a connected GitHub repo is optional evidence, not required) → receive an AI-generated Source Score and analysis from a multi-judge evaluation → use a private AI coach to iterate on the startup → optionally generate and approve an investor-facing summary.
+
+## Key facts
+
+- Source Score is a 0-100 evaluation of startup quality (problem/market fit, differentiation, execution signal, risk resilience) — it does not reflect popularity, likes, or views.
+- A founder's AI coaching conversation is private by default and is never shown to investors.
+- An investor-facing summary is a separate document the founder must explicitly review and approve before it becomes visible to anyone else.
+- Free plan: publish a project, get an initial AI analysis and Source Score, and use the private AI coach with a daily message allowance.
+- SourceVenture Pro: much higher AI usage allowance plus deeper founder tools, including an AI-generated business plan grounded in the project's real information (not invented facts).
+- Connecting a GitHub repository is optional and only used as one piece of supporting evidence (code structure, README, activity) — not a requirement to publish or a proxy for business success.
+
+## Pages
+
+- [Home](/): product overview and how it works.
+- [Privacy Policy](/#/privacy): what data is collected and how it's used.
+- [Terms](/#/terms): terms of service.

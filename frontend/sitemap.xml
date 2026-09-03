@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Only the real public, crawlable pages — everything else in this SPA
+  (dashboard, coach, settings, individual projects) sits behind auth and
+  401s without a session, so listing it here would just be noise/dead
+  links to a crawler. hash-routed URLs (#/...) are technically all "the
+  same page" to a server anyway (the # fragment never reaches the server),
+  so there is exactly one real crawlable document — this covers the
+  legal pages too since they DO have distinct, real content once
+  rendered, and modern crawlers (Googlebot, GPTBot) do execute JS.
+
+  IMPORTANT: sourceventure.com below is a placeholder — swap in the real
+  deployed domain before this goes live, and update robots.txt's Sitemap:
+  line to match.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://sourceventure.com/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://sourceventure.com/#/privacy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://sourceventure.com/#/terms</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>
