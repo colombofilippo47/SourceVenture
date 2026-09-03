@@ -62,6 +62,7 @@ talks to it over HTTP.
 | `projects`             | id, owner_user_id, status, timestamps, JSON `data`               |
 | `investor_applications`| id, user_id (unique), name, firm, status (pending/approved), timestamps |
 | `project_ratings`      | project_id → last council rating (scores, verdict, risk, improvements) |
+| `analytics_events`     | event name, optional project_id, timestamp — no IP, no user agent, no per-user row |
 
 ## Run locally
 
@@ -106,6 +107,8 @@ returns a 503 with a clear message instead of erroring confusingly.
 | GET    | `/api/investors/me` | yes | current user's application status |
 | GET    | `/api/investors/directory` | yes | full published-project list — 403 unless the threshold is met AND the caller is `approved` |
 | POST   | `/api/investors/match` | yes + CSRF | AI-ranks published projects against an investor's stated interest/amount |
+| POST   | `/api/analytics/event` | no   | records one allowlisted event name (+ optional project id). Rate-limited per IP; stores nothing identifying |
+| GET    | `/api/analytics/summary` | yes | platform-wide event totals + per-project counts **for the caller's own projects only** |
 
 **Approving an investor application**: no admin UI exists yet — approve
 manually: `sqlite3 data.db "UPDATE investor_applications SET
@@ -115,6 +118,29 @@ status='approved', decided_at=strftime('%s','now') WHERE user_id='<id>'"`.
 timestamp, keeping the 14 most recent by default (`--keep N` to change).
 No scheduler is wired up — run it manually, or point your host's own cron
 at it once this is actually deployed somewhere.
+
+## Security checklist status
+
+Tracked against [finehq/vibe-coding-checklist](https://github.com/finehq/vibe-coding-checklist).
+
+**Done**: server-side input validation with length caps · parameterized
+queries everywhere · passwords hashed with PBKDF2 + per-user salt ·
+httpOnly `Secure` `SameSite=Lax` session cookies · CSRF double-submit on
+every state-changing route · rate limiting per IP **and** per target
+account on login (blunts distributed brute force) · account-scoped
+authorization checks server-side (never UI-only) · security response
+headers · CSP in the frontend pinning which origins the page may contact ·
+secrets only in `.env`, which is gitignored · AI provider fallback chain ·
+AI output parsed defensively (allowlisted ids, JSON extraction with
+fallbacks) · first-party analytics that collects no personal data ·
+dependency lockfiles committed.
+
+**Knowingly not done yet** (each is a real gap, not an oversight): MFA ·
+password reset flow · email verification is issued but not enforced ·
+account lockout beyond rate limiting · encryption at rest · HTTPS (needs a
+real host) · automated dependency scanning in CI · SAST/DAST · privacy
+policy and consent UI · secrets manager instead of `.env`. Anything below
+in "Before this goes anywhere public" is the ordered version of this list.
 
 ## Before this goes anywhere public
 

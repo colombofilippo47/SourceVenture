@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- CSP: this app is a single file that builds its UI with inline <script>
+     and innerHTML, so 'unsafe-inline' is unavoidable without a rewrite.
+     The load-bearing part is the allowlist below — it pins exactly which
+     origins the page may talk to, so an injected script can't exfiltrate
+     to an attacker-controlled host. connect-src covers the backend
+     (localhost in dev; add your deployed API origin here) and GitHub's
+     public API; everything else is denied by default-src 'self'. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com; base-uri 'self'; form-action 'self'" />
+<!-- frame-ancestors is deliberately absent: it's ignored in a <meta> CSP and
+     only works as a real HTTP header. Set it (or X-Frame-Options) on whatever
+     serves this file in production — the API already sends X-Frame-Options. -->
 <title>SourceVenture — Venture Engineering</title>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
@@ -146,11 +157,19 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
 @media(max-width:900px){#sidenav{display:none;}}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
+/* Sidebar header is now the account row (avatar + name), not a logo tile —
+   the brand mark below lives in the top bar and landing nav instead. */
 .sn-head-account{text-decoration:none;color:inherit;transition:background-color .2s var(--ease-out-expo);}
 .sn-head-account:hover{background:var(--surface-high);}
 .sn-head h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
+.sv-brand{display:inline-flex;align-items:center;gap:8px;}
+.sv-mark{flex:none;display:block;width:auto;}
+.sv-mark-light{display:none;}
+:root[data-theme="light"] .sv-mark-dark{display:none;}
+:root[data-theme="light"] .sv-mark-light{display:block;}
+.sv-wordmark{font-family:var(--font-display);font-weight:700;letter-spacing:-.02em;}
 .sn-newbtn{padding:14px;}
 .sn-links{flex:1;padding:8px 0;overflow-y:auto;}
 .sn-links a{display:flex;align-items:center;gap:12px;padding:11px 20px;color:var(--on-surface-variant);font-size:14px;border-left:2px solid transparent;transition:color .15s,background .15s;}
@@ -446,7 +465,7 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
 .reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
 .reveal.in{opacity:1;filter:blur(0);transform:translateY(0) scale(1);}
-.magnetic{transition:transform .25s var(--ease-out-expo);will-change:transform;}
+.magnetic{transition:transform .25s var(--ease-out-expo);}
 @media(prefers-reduced-motion:reduce){.reveal{opacity:1;filter:none;transform:none;transition:none;}}
 
 /* ---------- help widget ---------- */
@@ -517,7 +536,16 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
    SOURCEVENTURE — core constants, state, utils, storage, APIs
    ============================================================ */
 const API_BASE = window.SOURCEVENTURE_API_BASE || "http://localhost:8000";
-const DAILY_CAP = 25;
+// First Drop (2026-09-02): free cap is 10/rolling-24h (was 25); Pro is a
+// 300/24h soft ceiling — see backend main.py's consume_coach_allowance for
+// the real, server-enforced version of this same number. currentDailyCap()
+// exists so every UI spot that used to read the flat DAILY_CAP constant
+// now reflects the signed-in user's actual plan.
+const FREE_DAILY_CAP = 10;
+const PRO_DAILY_CAP = 300;
+function currentDailyCap(){
+  return (STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? PRO_DAILY_CAP : FREE_DAILY_CAP;
+}
 const DIRECTORY_THRESHOLD = 30;
 const USER_THRESHOLD = 20;
 
@@ -636,6 +664,31 @@ function toggleTheme(){
     el.textContent = next === "light" ? "dark_mode" : "light_mode";
   });
 }
+/* ---------------- brand mark ----------------
+   Inline SVG rather than an image file: stays crisp at any size, inherits
+   the current text colour so it works in both themes with no second asset,
+   and adds no network request. Two offset chevron slabs forming an "S",
+   with the figure/person dot at the pivot. */
+// Brand mark — the real asset, generated from the supplied logo file: black
+// background made transparent, cropped to the mark's true bounds, and
+// squared so it never distorts. Two variants ship because the mark is white:
+// logo.png reads on the dark canvas, logo-light.png recolours the white
+// slabs to the light theme's ink while keeping the teal dot untouched. Both
+// are emitted every time and CSS shows whichever matches the active theme,
+// so toggling themes needs no JS and no re-render.
+// `size` is the mark's HEIGHT; width follows its natural 3:4 proportions.
+// (Forcing a square here is what made it look undersized before — the file
+// was padded to a square, so a nominal 15px box held an ~11px mark.)
+function logoMarkHtml(size){
+  var s = size || 22;
+  return '<img class="sv-mark sv-mark-dark" src="assets/logo.png" height="' + s + '" alt="" />' +
+         '<img class="sv-mark sv-mark-light" src="assets/logo-light.png" height="' + s + '" alt="" />';
+}
+function brandHtml(href){
+  var inner = '<span class="sv-brand">' + logoMarkHtml(19) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
+}
+
 function themeToggleHtml(){
   var icon = currentTheme() === "light" ? "dark_mode" : "light_mode";
   return '<button class="tb-icon theme-toggle" title="Toggle theme" onclick="toggleTheme()"><span class="material-symbols-outlined">' + icon + '</span></button>';
@@ -902,12 +955,18 @@ async function submitAuthForm(mode){
   var btn = $("auth-submit"); btn.disabled = true;
   try{
     var url = API_BASE + (isSignup ? "/api/auth/signup" : "/api/auth/login");
-    var body = isSignup ? { name:name, email:email, password:password } : { email:email, password:password };
+    var refCode = null;
+    if(isSignup){
+      var qIdx = window.location.hash.indexOf("?");
+      if(qIdx !== -1) refCode = new URLSearchParams(window.location.hash.slice(qIdx+1)).get("ref");
+    }
+    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined } : { email:email, password:password };
     var res = await fetch(url, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || (isSignup ? "Could not create account" : "Invalid email or password"));
     setAuth(data.user);
     if(isSignup){
+      track("signup_completed");
       renderAuthCheckEmail(data.user.email);
     } else {
       showToast("Welcome back, " + data.user.name + ".");
@@ -1038,6 +1097,10 @@ function parseGithubUrl(url){
 }
 async function fetchRepoContext(owner, repo){
   var ctx = { owner:owner, repo:repo, description:null, language:null, stars:null, contributors:null, files:[], readme:null, ok:false };
+  // GitHub is optional — a project with no connected repo has null
+  // owner/repo, and there's nothing to fetch (skip the wasted, always-404
+  // calls to api.github.com/repos/null/null).
+  if(!owner || !repo) return ctx;
   try{
     var metaRes = await fetch("https://api.github.com/repos/" + owner + "/" + repo);
     if(metaRes.ok){
@@ -1066,6 +1129,20 @@ async function fetchRepoContext(owner, repo){
   return ctx;
 }
 
+/* ---------------- analytics (first-party, no third-party tracker) ----------------
+   Fire-and-forget: a failed analytics call must never surface to the user
+   or block whatever they were actually doing. Event names are validated
+   server-side against an allowlist. */
+function track(name, projectId){
+  try{
+    fetch(API_BASE + "/api/analytics/event", {
+      method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name: name, projectId: projectId || null }),
+      keepalive: true
+    }).catch(function(){});
+  }catch(e){}
+}
+
 /* ---------------- Coach API (proxied through the Python backend) ---------------- */
 async function callClaude(messages, system, maxTokens){
   var res = await fetch(API_BASE + "/api/coach", {
@@ -1073,6 +1150,17 @@ async function callClaude(messages, system, maxTokens){
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
   if(res.status === 503){ throw new Error("NOT_CONFIGURED"); }
+  if(res.status === 429){
+    // The backend is the real cap enforcer (10/24h free, 300/24h pro, plus
+    // any referral bonus messages) — this can fire even when the client's
+    // own local usage counter thought a bonus message was still available,
+    // since that counter doesn't track server-side bonus draws. Surface
+    // the server's own detail text rather than a generic error.
+    var body = null; try{ body = await res.json(); }catch(e){}
+    var err = new Error("RATE_LIMITED");
+    err.detail = (body && body.detail) || null;
+    throw err;
+  }
   if(!res.ok){ throw new Error("Request failed (" + res.status + ")"); }
   var data = await res.json();
   return data.text || "";
@@ -1081,6 +1169,9 @@ function friendlyAiError(e){
   if(e && e.message === "NOT_CONFIGURED"){
     return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add GEMINI_API_KEY or ANTHROPIC_API_KEY in backend/.env. This isn't something you can fix by retrying.";
   }
+  if(e && e.message === "RATE_LIMITED"){
+    return e.detail || "Daily AI limit reached — try again after it resets.";
+  }
   return "Something went wrong reaching the AI. Try again in a moment.";
 }
 
@@ -1088,7 +1179,7 @@ function friendlyAiError(e){
 async function rateProject(p, repoContext){
   var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rate", {
     method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
-    body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoContext || null })
+    body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoContext || null, problem: p.problem || null, team: p.team || null })
   });
   var data = await res.json();
   if(!res.ok) throw new Error(data.detail || "Could not generate a rating");
@@ -1128,13 +1219,19 @@ const ROUTES = [
   { test:/^#\/project\/([^\/]+)$/, name:"project" },
   { test:/^#\/coach\/([^\/]+)$/, name:"coach" },
   { test:/^#\/summary\/([^\/]+)$/, name:"summary" },
+  { test:/^#\/plan\/([^\/]+)$/, name:"plan" },
   { test:/^#\/investors$/, name:"investors" },
   { test:/^#\/settings$/, name:"settings" },
   { test:/^#\/settings\/([^\/]+)$/, name:"settings" },
   { test:/^#\/admin$/, name:"admin" }
 ];
 
+// Bumped on every navigation. Render functions that await before touching
+// the DOM compare against it so a slow render from a page the user already
+// left can't write over the new one (or throw on elements it removed).
+var __renderToken = 0;
 async function router(){
+  var myToken = ++__renderToken;
   if(__authCanvasStop){ __authCanvasStop(); __authCanvasStop = null; }
   var hash = window.location.hash || "#/";
   var matched = null, param = null;
@@ -1144,6 +1241,7 @@ async function router(){
   }
   if(!matched) matched = { name:"landing" };
   window.scrollTo(0,0);
+  track("page_view", matched.name === "project" || matched.name === "coach" ? param : null);
 
   var root = $("root");
   if(matched.name === "landing"){
@@ -1171,7 +1269,7 @@ async function router(){
   }
 
   if(!isLoggedIn()){
-    root.innerHTML = '<div id="topbar"><div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a></div></div>' +
+    root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
       '<div class="canvas" style="padding-top:100px;text-align:center;">' +
         '<h1 class="page-title">Sign in required</h1>' +
         '<p class="page-sub" style="margin:0 auto 24px;">Create a free account or sign in to continue.</p>' +
@@ -1191,10 +1289,15 @@ async function router(){
     else if(matched.name === "project") await renderProjectDetail(main, param);
     else if(matched.name === "coach") await renderCoach(main, param);
     else if(matched.name === "summary") await renderSummary(main, param);
+    else if(matched.name === "plan") await renderBusinessPlan(main, param);
     else if(matched.name === "investors") await renderInvestors(main);
     else if(matched.name === "settings") await renderSettings(main, param || "account");
     else if(matched.name === "admin") await renderAdmin(main);
   }catch(e){
+    // Only surface the failure if this render is still the current one —
+    // otherwise it belongs to a page the user has already navigated away
+    // from, and writing here would clobber the page they're now on.
+    if(myToken !== __renderToken) return;
     console.error(e);
     main.innerHTML = errorBlock(e);
   }
@@ -1205,7 +1308,7 @@ function errorBlock(e){
 
 function appShellHtml(routeName){
   return '<div id="topbar">' +
-      '<div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a><div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+      '<div class="tb-left">' + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
@@ -1246,7 +1349,7 @@ async function renderLanding(root){
   var published = await loadAllPublishedProjects();
   root.innerHTML =
   '<nav id="landing-nav"><div class="wrap">' +
-    '<div class="tb-title">SourceVenture</div>' +
+    brandHtml(null) +
     '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
     '<div style="display:flex;gap:10px;align-items:center;">' +
       themeToggleHtml() +
@@ -1286,7 +1389,7 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="pricing-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>25 coach messages per rolling 24h, disclosed and enforced — no paid tier, no hidden ceiling.</p></div>' +
+    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan.</p></div>' +
     '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
@@ -1350,14 +1453,16 @@ async function renderNewProject(main){
   await ensureMe();
   main.innerHTML = '<div class="canvas">' +
     '<div class="eyebrow">New project</div><h1 class="page-title">Publish a project</h1>' +
-    '<p class="page-sub stack-lg">Free. Connects to a real public GitHub repo so your coach has real context from the start.</p>' +
+    '<p class="page-sub stack-lg">Free. A public GitHub repo gives your coach extra real-world context, but it\'s optional — the AI works from whatever you give it.</p>' +
     '<div class="card" style="padding:28px;">' +
       '<div class="form-error" id="np-error"></div>' +
       '<div class="field"><label>Project name <span class="req">*</span></label><input type="text" id="np-name" placeholder="neural-mesh-core" /></div>' +
       '<div class="field"><label>One-line tagline <span class="req">*</span></label><input type="text" id="np-tagline" placeholder="What it does, in one sentence" /></div>' +
       '<div class="field"><label>Category</label><input type="text" id="np-category" placeholder="e.g. DevTools, AI / ML, DeFi Infrastructure — optional, we’ll infer from the repo if left blank" /></div>' +
       '<div class="field"><label>Full pitch <span class="req">*</span></label><textarea id="np-pitch" rows="5" placeholder="What you’re building, why it matters, what stage you’re at. This is what your coach reads first."></textarea></div>' +
-      '<div class="field"><label>GitHub repo URL <span class="req">*</span></label><input type="text" id="np-repo" placeholder="https://github.com/owner/repo" /><div class="hint">We fetch the public description, README, top-level files and contributor count.</div></div>' +
+      '<div class="field"><label>Problem you\'re solving</label><textarea id="np-problem" rows="3" placeholder="Optional, but it sharpens every piece of AI feedback — who has this problem, how big is it, why does it matter now."></textarea></div>' +
+      '<div class="field"><label>Team</label><textarea id="np-team" rows="2" placeholder="Optional — who\'s building this and why they\'re the right people for it."></textarea></div>' +
+      '<div class="field"><label>GitHub repo URL <span class="muted" style="font-weight:400;">(optional)</span></label><input type="text" id="np-repo" placeholder="https://github.com/owner/repo" /><div class="hint">If given, we fetch the public description, README, top-level files and contributor count as extra evidence.</div></div>' +
       '<button class="btn btn-primary btn-block" id="np-submit" onclick="submitNewProject()">Publish & open my coach</button>' +
     '</div>' +
   '</div>';
@@ -1368,16 +1473,18 @@ async function submitNewProject(){
   var tagline = $("np-tagline").value.trim();
   var category = $("np-category").value.trim();
   var pitch = $("np-pitch").value.trim();
+  var problem = $("np-problem").value.trim();
+  var team = $("np-team").value.trim();
   var repoUrl = $("np-repo").value.trim();
   var err = $("np-error");
 
-  if(!name || !tagline || !pitch || !repoUrl){
+  if(!name || !tagline || !pitch){
     err.textContent = "Fill in every required field — your coach needs all of it.";
     err.classList.add("show");
     return;
   }
-  var parsed = parseGithubUrl(repoUrl);
-  if(!parsed){
+  var parsed = repoUrl ? parseGithubUrl(repoUrl) : null;
+  if(repoUrl && !parsed){
     err.textContent = "That doesn't look like a github.com repo URL, e.g. https://github.com/owner/repo";
     err.classList.add("show");
     return;
@@ -1389,27 +1496,31 @@ async function submitNewProject(){
   var project = {
     id: uid("proj"), founder: STATE.auth.user.name,
     name: name, tagline: tagline, category: category, pitch: pitch, description: tagline,
-    repoUrl: repoUrl, owner: parsed.owner, repo: parsed.repo,
+    problem: problem || null, team: team || null,
+    repoUrl: parsed ? repoUrl : null, owner: parsed ? parsed.owner : null, repo: parsed ? parsed.repo : null,
     language:null, stars:null, contributors:null, files:[], readmeOk:false,
     status: "published", createdAt: Date.now(), publishedAt: Date.now(), repoSyncedAt: null,
-    investorSummary: null, investorSummaryApprovedAt: null, signal: null
+    investorSummary: null, investorSummaryDraft: null, investorSummaryApprovedAt: null, signal: null
   };
 
-  try{
-    var ctx = await fetchRepoContext(parsed.owner, parsed.repo);
-    project.language = ctx.language;
-    project.stars = ctx.stars;
-    project.contributors = ctx.contributors;
-    project.files = ctx.files;
-    project.readmeOk = !!ctx.readme;
-    project.repoSyncedAt = Date.now();
-    project._repoCtxCache = ctx;
-  }catch(e){}
+  if(parsed){
+    try{
+      var ctx = await fetchRepoContext(parsed.owner, parsed.repo);
+      project.language = ctx.language;
+      project.stars = ctx.stars;
+      project.contributors = ctx.contributors;
+      project.files = ctx.files;
+      project.readmeOk = !!ctx.readme;
+      project.repoSyncedAt = Date.now();
+      project._repoCtxCache = ctx;
+    }catch(e){}
+  }
 
   if(!project.category){ project.category = project.language || "Uncategorized"; }
 
   try{
     await saveProject(project);
+    track("project_published", project.id);
     showToast(project.name + " is live.");
     nav("#/coach/" + project.id);
   }catch(e){
@@ -1433,6 +1544,7 @@ async function renderProjectDetail(main, id){
       '<div><h1 class="page-title">' + escapeHtml(p.name) + '</h1><p class="page-sub">' + escapeHtml(p.tagline||"") + '</p></div>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="nav(\'#/coach/' + p.id + '\')">Open Coach</button><button class="btn btn-ghost btn-sm" onclick="nav(\'#/summary/' + p.id + '\')">Investor Summary</button></div>' +
     '</div>' +
+    (p.repo ?
     '<div class="card repo-card stack-lg" style="margin-top:24px;">' +
       '<div class="repo-top"><div><div class="mono muted" style="font-size:12px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</div><h3 style="margin-top:4px;">Repository</h3></div>' +
         '<span class="repo-badge">' + (p.readmeOk ? "Active Production" : "Sync incomplete") + '</span></div>' +
@@ -1447,14 +1559,18 @@ async function renderProjectDetail(main, id){
       '<div style="margin-top:18px;"><div class="mono muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px;">Repository structure</div>' +
         (p.files && p.files.length ? p.files.map(function(f){ return '<div class="file-row"><span class="fname"><span class="material-symbols-outlined" style="font-size:14px;">' + (f.type==="dir"?"folder":"description") + '</span>' + escapeHtml(f.name) + '</span></div>'; }).join("") : '<div class="muted" style="font-size:12.5px;">Could not read repository contents (private repo, rate limit, or network).</div>') +
       '</div>' +
-    '</div>' +
-    '<div class="card" style="padding:22px 24px;"><h3 style="font-size:15px;margin-bottom:10px;">Full pitch</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.pitch) + '</p></div>' +
+    '</div>'
+    : '<div class="card" style="padding:18px 22px;margin-top:24px;display:flex;align-items:center;gap:10px;"><span class="material-symbols-outlined muted">link_off</span><p class="muted" style="font-size:13px;margin:0;">No GitHub repo connected — the coach works from the pitch below. GitHub is optional.</p></div>'
+    ) +
+    '<div class="card" style="padding:22px 24px;margin-top:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Full pitch</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.pitch) + '</p></div>' +
+    (p.problem ? '<div class="card" style="padding:22px 24px;margin-top:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Problem</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.problem) + '</p></div>' : "") +
+    (p.team ? '<div class="card" style="padding:22px 24px;margin-top:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Team</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.team) + '</p></div>' : "") +
   '</div>';
 }
 /* ============================================================
    AI COACH
    ============================================================ */
-let COACH = { project:null, messages:[], usage:[], repoCtx:null };
+let COACH = { project:null, messages:[], usage:[], repoCtx:null, rating:null };
 
 async function renderCoach(main, id){
   var p = await loadProject(id);
@@ -1481,14 +1597,21 @@ async function renderCoach(main, id){
       '</div>' +
       '<div class="coach-side">' +
         '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button></div>' +
-        '<div class="coach-side-block"><h4>Business rating</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
+        '<div class="coach-side-block"><h4>Source Score</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
+        (p.repo ?
         '<div class="coach-side-block"><h4>Project context</h4><div class="metric-row"><span>Repo</span><span class="mval mono" style="font-size:11px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</span></div>' +
           '<div class="metric-row"><span>Stars</span><span class="mval">' + (p.stars!=null?p.stars:"—") + '</span></div>' +
           '<div class="metric-row"><span>Contributors</span><span class="mval">' + (p.contributors!=null?p.contributors:"—") + '</span></div>' +
           '<div class="metric-row"><span>Language</span><span class="mval">' + (p.language||"—") + '</span></div>' +
+        '</div>'
+        : '<div class="coach-side-block"><h4>Project context</h4><p class="muted" style="font-size:12px;">No GitHub repo connected — coaching from the pitch alone.</p></div>') +
+        '<div class="coach-side-block"><h4>Investor summary</h4><p class="muted" style="font-size:12px;margin-bottom:10px;">' + (p.investorSummary ? "Approved for investors." : (p.investorSummaryDraft ? "Draft ready — not yet approved." : "Not generated yet.")) + '</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/summary/' + p.id + '\')">Open workspace</button></div>' +
+        '<div class="coach-side-block"><h4>Business plan</h4>' +
+          ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ?
+            '<p class="muted" style="font-size:12px;margin-bottom:10px;">AI-generated, grounded in this project\'s real context.</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/plan/' + p.id + '\')">Open business plan</button>'
+            : '<p class="muted" style="font-size:12px;margin-bottom:10px;">A Pro feature — a structured, AI-generated business plan built from this project\'s pitch, score and context.</p><button class="btn btn-ghost btn-sm btn-block" onclick="openUpgradeModal()">Upgrade to Pro</button>') +
         '</div>' +
-        '<div class="coach-side-block"><h4>Investor summary</h4><p class="muted" style="font-size:12px;margin-bottom:10px;">' + (p.investorSummary ? "Published to investors." : "Not generated yet.") + '</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/summary/' + p.id + '\')">Open workspace</button></div>' +
-        '<div class="coach-side-block"><h4>Message cap</h4><p class="muted" style="font-size:12px;">' + DAILY_CAP + ' messages / rolling 24h.</p></div>' +
+        '<div class="coach-side-block"><h4>Message cap</h4><p class="muted" style="font-size:12px;">' + currentDailyCap() + ' messages / rolling 24h (' + ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? "Pro" : "Free") + ').</p></div>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -1529,15 +1652,21 @@ function activeUsageCount(){
 function renderCapNote(){
   var note = $("coach-cap");
   if(!note) return;
+  var cap = currentDailyCap();
+  var isPro = !!(STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro");
+  var bonus = (STATE.auth && STATE.auth.user && STATE.auth.user.referralBonusRemaining) || 0;
   var used = activeUsageCount();
-  var remaining = Math.max(0, DAILY_CAP - used);
-  if(remaining === 0){
+  var remaining = Math.max(0, cap - used);
+  if(remaining === 0 && bonus === 0){
     var oldest = Math.min.apply(null, COACH.usage);
     var resetsAt = new Date(oldest + 24*60*60*1000);
-    note.textContent = "Daily cap reached (" + DAILY_CAP + "/" + DAILY_CAP + "). Resets " + resetsAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + ".";
+    note.textContent = "Daily cap reached (" + cap + "/" + cap + "). Resets " + resetsAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + ".";
     $("coach-send").disabled = true;
+  } else if(remaining === 0 && bonus > 0){
+    note.textContent = "Daily cap reached — using referral bonus messages (" + bonus + " left).";
+    $("coach-send").disabled = false;
   } else {
-    note.textContent = remaining + " of " + DAILY_CAP + " coach messages left today (free tier).";
+    note.textContent = remaining + " of " + cap + " coach messages left today (" + (isPro ? "Pro" : "free tier") + ").";
     $("coach-send").disabled = false;
   }
 }
@@ -1563,12 +1692,13 @@ function scoreBarHtml(label, val){
 }
 function ratingBlockHtml(r, p){
   if(!r){
-    return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Rate my business</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge council (VC, technical due-diligence, growth analyst) — separate from the free-text idea evaluation above.</p>';
+    return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Get my Source Score</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge AI council (VC, technical due-diligence, growth analyst), evaluating actual startup evidence — never likes, views or popularity.</p>';
   }
   var improvements = (r.improvements||[]).map(function(imp){ return '<li style="margin-bottom:4px;">' + escapeHtml(imp) + '</li>'; }).join("");
-  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">' +
-      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '</div>' +
-      '<div class="muted" style="font-size:11px;">overall / 100</div></div>' +
+  return '<div class="muted mono" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Source Score</div>' +
+    '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">' +
+      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '<span style="font-size:15px;">/100</span></div>' +
+      '<div class="muted" style="font-size:13px;">' + r.overall + '%</div></div>' +
     '<p class="muted mono" style="font-size:10px;margin-bottom:12px;">' + (r.judges||3) + '-judge council · median score</p>' +
     scoreBarHtml("Problem &amp; market", r.scores.problem_market) +
     scoreBarHtml("Differentiation", r.scores.differentiation) +
@@ -1585,6 +1715,7 @@ async function loadAndRenderRating(p){
   try{
     var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rating");
     var data = await res.json();
+    COACH.rating = data.rating || null;
     block.innerHTML = ratingBlockHtml(data.rating, p);
   }catch(e){
     block.innerHTML = ratingBlockHtml(null, p);
@@ -1597,15 +1728,19 @@ async function runRating(id){
   try{
     if(!COACH.repoCtx && COACH.project){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
     var repoText = COACH.repoCtx ? (COACH.repoCtx.readme || COACH.repoCtx.description || "") : "";
+    track("rating_requested", id);
     var data = await rateProject(COACH.project, repoText);
+    COACH.rating = data;
     block.innerHTML = ratingBlockHtml(data, COACH.project);
   }catch(e){
     block.innerHTML = '<p class="muted" style="font-size:12px;">' + escapeHtml(e.message) + '</p><button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="runRating(' + "'" + id + "'" + ')">Try again</button>';
   }
 }
 
-function coachSystemPrompt(p, ctx){
-  var repoBlock = "No public repo data could be fetched for this session — coach on the pitch alone.";
+function coachSystemPrompt(p, ctx, rating){
+  var repoBlock = p.repo
+    ? "No public repo data could be fetched for this session — coach on the pitch alone."
+    : "No GitHub repo is connected to this project (optional) — coach on the pitch, problem and team details alone.";
   if(ctx && (ctx.description || ctx.readme)){
     repoBlock =
 '<repo_data owner="' + p.owner + '" repo="' + p.repo + '">\n' +
@@ -1618,22 +1753,47 @@ function coachSystemPrompt(p, ctx){
 'README (truncated):\n' + (ctx.readme || "(none found)") + '\n' +
 '</repo_data>';
   }
+  // The council rating already exists server-side — feeding it to the coach
+  // means the chat and the scorecard stop contradicting each other, and the
+  // coach can work from what the judges actually flagged instead of
+  // re-deriving its own opinion from scratch every session.
+  var ratingBlock = "";
+  if(rating && rating.scores){
+    ratingBlock = "\n\n<council_rating>\nA 3-judge council (VC, technical due-diligence, growth analyst) already scored this project. Treat these as your colleagues' assessments — build on them, don't silently contradict them without saying why.\n" +
+      "overall: " + rating.overall + "/100\n" +
+      "problem & market: " + rating.scores.problem_market + "\n" +
+      "differentiation: " + rating.scores.differentiation + "\n" +
+      "execution signal: " + rating.scores.execution_signal + "\n" +
+      "risk resilience: " + rating.scores.risk_resilience + "\n" +
+      (rating.verdict ? "verdict: " + rating.verdict + "\n" : "") +
+      (rating.biggest_risk ? "biggest risk: " + rating.biggest_risk + "\n" : "") +
+      ((rating.improvements||[]).length ? "open improvements the panel flagged:\n- " + rating.improvements.join("\n- ") + "\n" : "") +
+      "</council_rating>";
+  }
+
   return "You are the SourceVenture Coach — a direct, technically credible mentor for a solo or small-team founder. This conversation is private; it is never shown to investors. " +
     "Ground your advice in the real project details below whenever relevant. When suggesting code changes, use short fenced code blocks. Be honest about weaknesses, but constructive. Keep replies tight. Never claim to have taken actions you didn't take (you cannot run code, browse further, or push commits).\n\n" +
+    "Style: lead with the answer, not a preamble. Prefer one specific, doable action over a list of five generic ones. If the founder's question is vague, ask one sharp clarifying question instead of guessing at length. Don't flatter — 'that's a great question' adds nothing.\n\n" +
     "When the founder asks you to evaluate, assess, or review the startup idea itself (not just the code), structure your answer under these headers, in this order: **Problem & market** (is the problem real, how big, who has it), **Differentiation** (what's the actual edge, and against whom), **Execution signal** (what the repo/pitch shows about ability to ship — cite specifics, don't guess), **Biggest risk** (the single thing most likely to kill this), **Next concrete step** (one thing to do this week, not a vague list). Ground every claim in the pitch or repo data given to you; say explicitly when you don't have enough information to judge something rather than inventing traction, market size, or user numbers.\n\n" +
-    "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\n\n" + repoBlock;
+    "If a <council_rating> block is present below, open that evaluation with a single line stating the overall score as a percentage, e.g. 'Overall: 62/100 — solid execution signal, weak differentiation,' then use it as the basis for the rest of your answer instead of re-deriving your own number. If no rating exists yet, don't invent a percentage — say a rating hasn't been run and suggest requesting one instead.\n\n" +
+    "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch +
+    (p.problem ? "\nProblem being solved: " + p.problem : "") +
+    (p.team ? "\nTeam: " + p.team : "") +
+    "\n\n" + repoBlock + ratingBlock;
 }
 
 async function sendCoachMessage(){
   var input = $("coach-input");
   var text = input.value.trim();
   if(!text) return;
-  if(activeUsageCount() >= DAILY_CAP){
+  var bonusLeft = (STATE.auth && STATE.auth.user && STATE.auth.user.referralBonusRemaining) || 0;
+  if(activeUsageCount() >= currentDailyCap() && bonusLeft <= 0){
     showToast("Daily cap reached — try again after it resets.");
     return;
   }
   input.value = "";
   appendCoachMsg("user", text);
+  track("coach_message_sent", COACH.project ? COACH.project.id : null);
 
   COACH.usage.push(Date.now());
   saveUsage(COACH.project.id, COACH.usage);
@@ -1648,7 +1808,7 @@ async function sendCoachMessage(){
 
   try{
     if(!COACH.repoCtx){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
-    var system = coachSystemPrompt(COACH.project, COACH.repoCtx);
+    var system = coachSystemPrompt(COACH.project, COACH.repoCtx, COACH.rating);
     var apiMessages = COACH.messages.filter(function(m){ return m.role==="user"||m.role==="assistant"; }).map(function(m){ return {role:m.role, content:m.content}; });
     var reply = await callClaude(apiMessages, system);
     var el = document.getElementById("coach-typing"); if(el) el.remove();
@@ -1678,21 +1838,42 @@ async function renderSummary(main, id){
   renderSummaryCard(p);
 }
 
+// DRAFT -> REVIEW -> APPROVED lifecycle (First Drop, 2026-09-02). Generating
+// text and making it visible to investors used to be the same click — this
+// splits them: generateSummary() only ever writes investorSummaryDraft,
+// and approveSummary() is the one action that copies draft -> the live
+// investorSummary the backend actually exposes to approved investors.
+// Regenerating after approval never touches the still-live approved text
+// until the founder explicitly re-approves.
 function renderSummaryCard(p){
   var card = $("summary-card");
-  if(p.investorSummary){
-    card.innerHTML =
-      '<div class="doc-toolbar"><div class="doc-status"><span class="dot"></span>Published to investors</div>' +
-        '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="regenerateSummary(\'' + p.id + '\')">Regenerate</button><button class="btn btn-danger btn-sm" onclick="unpublishSummary(\'' + p.id + '\')">Unpublish</button></div></div>' +
-      '<div class="doc-body">' + escapeHtml(p.investorSummary) + '</div>';
-  } else {
+  var hasApproved = !!p.investorSummary;
+  var hasDraft = !!p.investorSummaryDraft;
+  var draftDiffersFromApproved = hasDraft && p.investorSummaryDraft !== p.investorSummary;
+
+  if(!hasApproved && !hasDraft){
     card.innerHTML = '<div style="padding:50px 30px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;">' +
       '<span class="material-symbols-outlined" style="font-size:38px;color:var(--on-surface-variant);">document_scanner</span>' +
       '<h3 style="font-size:18px;">No Summary Generated</h3>' +
-      '<p class="muted" style="max-width:400px;font-size:13.5px;">Compile the current pitch and repo signals into a unified technical brief for investors.</p>' +
-      '<button class="btn btn-primary" id="gen-summary-btn" onclick="generateSummary(\'' + p.id + '\')">Generate Summary</button>' +
+      '<p class="muted" style="max-width:400px;font-size:13.5px;">Draft an investor-facing brief from the current pitch and repo signals. Nothing is visible to investors until you explicitly approve it.</p>' +
+      '<button class="btn btn-primary" id="gen-summary-btn" onclick="generateSummary(\'' + p.id + '\')">Generate draft</button>' +
     '</div>';
+    return;
   }
+
+  var html = "";
+  if(hasApproved){
+    html += '<div class="doc-toolbar"><div class="doc-status"><span class="dot"></span>Approved for investors' + (p.investorSummaryApprovedAt ? ' · ' + timeAgo(p.investorSummaryApprovedAt) : '') + '</div>' +
+        '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="generateSummary(\'' + p.id + '\')">Regenerate draft</button><button class="btn btn-danger btn-sm" onclick="unpublishSummary(\'' + p.id + '\')">Unpublish</button></div></div>' +
+      '<div class="doc-body">' + escapeHtml(p.investorSummary) + '</div>';
+  }
+  if(hasDraft && (draftDiffersFromApproved || !hasApproved)){
+    html += '<div class="doc-toolbar" style="border-top:1px solid var(--outline-variant);margin-top:' + (hasApproved?'18px':'0') + ';">' +
+        '<div class="doc-status"><span class="dot" style="background:var(--tertiary);"></span>Draft — not visible to investors yet</div>' +
+        '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="generateSummary(\'' + p.id + '\')">Regenerate</button><button class="btn btn-primary btn-sm" onclick="approveSummary(\'' + p.id + '\')">' + (hasApproved ? 'Approve this update' : 'Approve for investors') + '</button></div></div>' +
+      '<div class="doc-body">' + escapeHtml(p.investorSummaryDraft) + '</div>';
+  }
+  card.innerHTML = html;
 }
 
 async function generateSummary(id){
@@ -1702,27 +1883,123 @@ async function generateSummary(id){
   var card = $("summary-card");
   card.innerHTML = '<div style="padding:40px;"><div class="skel" style="height:120px;"></div><div class="mono muted" style="font-size:11px;margin-top:10px;">Synthesizing…</div></div>';
   try{
-    var system = "You write short, investor-facing progress briefs for founders on SourceVenture. Write a 4-6 sentence brief in a professional, factual, editorial voice: what the project is, the real signal in the repo (stars, language, activity) if any, and what the founder is asking for. Do not fabricate numbers or traction not given to you. Output only the brief text, nothing else, no headers.";
-    var payload = "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\nRepo: " + p.owner + "/" + p.repo + " — language: " + (p.language||"unknown") + ", stars: " + (p.stars!=null?p.stars:"unknown") + ", contributors: " + (p.contributors!=null?p.contributors:"unknown");
+    var system = "You write short, investor-facing progress briefs for founders on SourceVenture. Write a 4-6 sentence brief in a professional, factual, editorial voice: what the project is, the real signal in the repo (stars, language, activity) if any, and what the founder is asking for. Do not fabricate numbers or traction not given to you — if there's no repo connected, write from the pitch alone and don't invent repo signal. Output only the brief text, nothing else, no headers.";
+    var repoLine = p.repo ? ("\nRepo: " + p.owner + "/" + p.repo + " — language: " + (p.language||"unknown") + ", stars: " + (p.stars!=null?p.stars:"unknown") + ", contributors: " + (p.contributors!=null?p.contributors:"unknown")) : "\nNo GitHub repo connected.";
+    var payload = "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + repoLine;
     var summary = await callClaude([{ role:"user", content: payload }], system);
-    p.investorSummary = summary.trim();
-    p.investorSummaryApprovedAt = Date.now();
+    p.investorSummaryDraft = summary.trim();
     await ensureSignal(p);
     await saveProject(p);
     renderSummaryCard(p);
-    showToast("Summary generated and published to the investor directory.");
+    showToast("Draft ready — review it, then approve when you're ready for investors to see it.");
   }catch(e){
     renderSummaryCard(p);
-    showToast("Could not generate a summary. Try again.", true);
+    showToast("Could not generate a draft. Try again.", true);
   }
 }
-async function regenerateSummary(id){ await generateSummary(id); }
+async function approveSummary(id){
+  var p = await loadProject(id);
+  if(!p.investorSummaryDraft){ showToast("Nothing to approve yet.", true); return; }
+  p.investorSummary = p.investorSummaryDraft;
+  p.investorSummaryApprovedAt = Date.now();
+  await saveProject(p);
+  renderSummaryCard(p);
+  showToast("Approved — now visible to approved investors in the gated directory.");
+}
 async function unpublishSummary(id){
   var p = await loadProject(id);
-  p.investorSummary = null; p.investorSummaryApprovedAt = null;
+  p.investorSummary = null; p.investorSummaryApprovedAt = null; p.investorSummaryDraft = null;
   await saveProject(p);
   renderSummaryCard(p);
   showToast("Removed from the investor directory.");
+}
+
+/* ============================================================
+   AI BUSINESS PLAN (Pro-only, First Drop 2026-09-02)
+   ============================================================ */
+var BUSINESS_PLAN_SECTION_TITLES = {
+  executive_summary: "Executive summary", problem: "Problem", solution: "Solution",
+  product: "Product", target_customer: "Target customer", market: "Market",
+  competitive_landscape: "Competitive landscape", differentiation: "Differentiation",
+  business_model: "Business model", go_to_market: "Go-to-market", traction: "Traction",
+  technology: "Technology", team: "Team", risks: "Risks", opportunities: "Opportunities",
+  financial_assumptions: "Financial assumptions", growth_strategy: "Growth strategy",
+  execution_priorities: "Execution priorities", next_steps: "Next steps",
+};
+
+async function renderBusinessPlan(main, id){
+  var p = await loadProject(id);
+  if(!p){
+    main.innerHTML = '<div class="empty-state"><h3>Unable to load this project</h3><button class="btn btn-ghost" style="margin-top:14px;" onclick="nav(\'#/projects\')">Back to Projects</button></div>';
+    return;
+  }
+  if(!(STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro")){
+    main.innerHTML = '<div class="canvas"><div class="empty-state"><h3>Business plan is a Pro feature</h3>' +
+      '<p class="muted" style="max-width:420px;margin:10px auto;">An AI-generated, section-by-section business plan grounded in this project\'s real pitch, repo evidence and Source Score — included with SourceVenture Pro.</p>' +
+      '<button class="btn btn-primary" style="margin-top:8px;" onclick="openUpgradeModal()">Upgrade to Pro</button></div></div>';
+    return;
+  }
+  main.innerHTML = '<div class="canvas">' +
+    '<div class="eyebrow">Pro</div><h1 class="page-title">Business plan</h1>' +
+    '<p class="page-sub stack-lg">' + escapeHtml(p.name) + ' — generated from the actual pitch, repo evidence and Source Score. Missing information is called out, never invented.</p>' +
+    '<div id="plan-body"></div>' +
+  '</div>';
+  await loadAndRenderBusinessPlan(p);
+}
+
+function businessPlanHtml(plan){
+  if(!plan){
+    return '<div class="card" style="padding:40px 30px;text-align:center;"><p class="muted" style="margin-bottom:14px;">No business plan generated yet.</p><button class="btn btn-primary" id="gen-plan-btn" onclick="generateBusinessPlan()">Generate business plan</button></div>';
+  }
+  var sections = plan.sections || {};
+  var order = Object.keys(BUSINESS_PLAN_SECTION_TITLES);
+  var html = order.filter(function(k){ return sections[k]; }).map(function(k){
+    return '<div class="card" style="padding:20px 24px;margin-bottom:12px;"><h3 style="font-size:14px;margin-bottom:8px;">' + BUSINESS_PLAN_SECTION_TITLES[k] + '</h3>' +
+      '<p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(sections[k]) + '</p></div>';
+  }).join("");
+  var missing = (plan.missing_information || []);
+  if(missing.length){
+    html += '<div class="card" style="padding:20px 24px;margin-bottom:12px;border-color:var(--tertiary);"><h3 style="font-size:14px;margin-bottom:8px;">Missing information</h3>' +
+      '<ul class="muted" style="font-size:13px;padding-left:18px;">' + missing.map(function(m){ return '<li style="margin-bottom:4px;">' + escapeHtml(m) + '</li>'; }).join("") + '</ul></div>';
+  }
+  html += '<button class="btn btn-ghost btn-sm" id="gen-plan-btn" onclick="generateBusinessPlan()">Regenerate</button>';
+  return html;
+}
+
+async function loadAndRenderBusinessPlan(p){
+  var el = $("plan-body");
+  if(!el) return;
+  el.innerHTML = '<div class="skel" style="height:100px;"></div>';
+  try{
+    var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/business-plan", { credentials:"include" });
+    var data = await res.json();
+    el.innerHTML = businessPlanHtml(data.plan);
+  }catch(e){
+    el.innerHTML = businessPlanHtml(null);
+  }
+}
+
+async function generateBusinessPlan(){
+  var id = window.location.hash.split("/")[2];
+  var p = await loadProject(id);
+  var el = $("plan-body");
+  var btn = $("gen-plan-btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Generating…"; }
+  if(el) el.innerHTML = '<div class="skel" style="height:160px;"></div><p class="mono muted" style="font-size:11px;margin-top:10px;">Writing a grounded, section-by-section plan — takes a bit longer than a chat reply…</p>';
+  try{
+    var repoText = p.repo ? (p._repoCtxCache && p._repoCtxCache.readme ? p._repoCtxCache.readme.slice(0,4000) : null) : null;
+    var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/business-plan", {
+      method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+      body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoText, problem: p.problem || null, team: p.team || null })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not generate a business plan");
+    if(el) el.innerHTML = businessPlanHtml(data);
+    showToast("Business plan generated.");
+  }catch(e){
+    if(el) el.innerHTML = businessPlanHtml(null);
+    showToast(e.message || "Could not generate a business plan.", true);
+  }
 }
 
 async function ensureSignal(p){
@@ -1814,6 +2091,7 @@ async function findInvestorMatches(){
     });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || "Could not find matches");
+    track("investor_match_searched");
     if(!data.matches || !data.matches.length){
       results.innerHTML = '<p class="muted" style="font-size:13px;">No strong matches in the current directory yet — try broadening your description.</p>';
     } else {
@@ -1834,7 +2112,11 @@ async function findInvestorMatches(){
 }
 
 function renderDirList(published, open, approved){
+  // Bail if the container is gone: renderInvestors awaits several fetches
+  // before getting here, and a fast navigation in the meantime replaces
+  // #root wholesale — the stale render would otherwise throw on null.
   var el = $("dir-list");
+  if(!el) return;
   var canSeeReal = open && approved;
 
   if(published.length === 0){
@@ -1893,6 +2175,7 @@ async function submitInvestorApp(){
   try{
     await applyAsInvestor(name, firm);
     closeModal();
+    track("investor_application_submitted");
     showToast("Application submitted — you'll get access once it's reviewed and approved.");
     router();
   }catch(e){
@@ -1945,14 +2228,15 @@ async function renderAdmin(main){
       '<div class="card" style="overflow-x:auto;">' +
         '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
           '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
-            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th>' +
-          '</tr></thead><tbody>' +
+            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th>' +
+          '</tr></thead><tbody id="admin-users-tbody">' +
           users.map(function(u){
-            return '<tr style="border-top:1px solid var(--outline-variant);">' +
+            return '<tr style="border-top:1px solid var(--outline-variant);" id="admin-user-row-' + u.id + '">' +
               '<td style="padding:10px 14px;">' + escapeHtml(u.name) + '</td>' +
               '<td style="padding:10px 14px;" class="mono muted">' + escapeHtml(u.email) + '</td>' +
               '<td style="padding:10px 14px;">' + (u.emailVerified ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);">check_circle</span>' : '<span class="muted">—</span>') + '</td>' +
               '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(u.createdAt * 1000) + '</td>' +
+              '<td style="padding:10px 14px;">' + adminPlanCellHtml(u) + '</td>' +
             '</tr>';
           }).join("") +
           '</tbody></table>' +
@@ -2008,10 +2292,31 @@ async function adminDecideApp(id, action){
   }catch(e){ showToast(e.message, true); }
 }
 
+// Manual Pro toggle — the stand-in for real billing until Stripe is
+// connected (see backend main.py's admin_set_user_plan docstring). This is
+// how a founder actually gets moved to Pro today.
+function adminPlanCellHtml(u){
+  var isPro = u.plan === "pro";
+  return '<span class="repo-badge" style="margin-right:8px;' + (isPro ? '' : 'border-color:var(--on-surface-variant);color:var(--on-surface-variant);') + '">' + (isPro ? "PRO" : "FREE") + '</span>' +
+    '<button class="btn btn-ghost btn-sm" onclick="adminSetPlan(\'' + u.id + '\',\'' + (isPro ? "free" : "pro") + '\')">' + (isPro ? "Downgrade" : "Make Pro") + '</button>';
+}
+async function adminSetPlan(userId, plan){
+  try{
+    var res = await fetch(API_BASE + "/api/admin/users/" + userId + "/plan", {
+      method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+      body: JSON.stringify({ plan: plan })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't update plan");
+    showToast(plan === "pro" ? "Account upgraded to Pro." : "Account moved back to Free.");
+    renderAdmin($("main"));
+  }catch(e){ showToast(e.message, true); }
+}
+
 /* ============================================================
    SETTINGS
    ============================================================ */
-const SETTINGS_TABS = [["account","Account"],["security","Security"],["privacy","Privacy"]];
+const SETTINGS_TABS = [["account","Account"],["plan","Plan"],["security","Security"],["privacy","Privacy"]];
 
 async function renderSettings(main, tab){
   await ensureMe();
@@ -2024,9 +2329,47 @@ async function renderSettings(main, tab){
 
   var el = $("settings-content");
   if(tab === "account") renderAccountTab(el);
+  else if(tab === "plan") renderPlanTab(el);
   else if(tab === "security") renderSecurityTab(el);
   else if(tab === "privacy") renderPrivacyTab(el);
   else renderAccountTab(el);
+}
+
+function renderPlanTab(el){
+  var u = STATE.auth.user;
+  var isPro = u.plan === "pro";
+  var refLink = window.location.origin + window.location.pathname + "#/signup?ref=" + encodeURIComponent(u.referralCode || "");
+  el.innerHTML =
+    '<div class="card" style="padding:24px;max-width:520px;margin-bottom:16px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<h3 style="font-size:16px;">' + (isPro ? "SourceVenture Pro" : "Free plan") + '</h3>' +
+        '<span class="repo-badge" style="' + (isPro ? '' : 'border-color:var(--on-surface-variant);color:var(--on-surface-variant);') + '">' + (isPro ? "PRO" : "FREE") + '</span>' +
+      '</div>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:14px;">' + currentDailyCap() + ' AI coach messages / rolling 24h' + (isPro ? ", plus the AI-generated business plan." : ".") + '</p>' +
+      (isPro
+        ? '<p class="muted" style="font-size:12px;">You\'re on Pro. Thanks for supporting SourceVenture.</p>'
+        : '<button class="btn btn-primary btn-sm" onclick="openUpgradeModal()">Upgrade to Pro — $15/mo</button>') +
+    '</div>' +
+    '<div class="card" style="padding:24px;max-width:520px;">' +
+      '<h3 style="font-size:16px;margin-bottom:6px;">Referrals</h3>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:14px;">Invite founders. When 3 of them publish a real project you get +50 bonus coach messages; at 5, another +100. Only real, published projects count — not signups.</p>' +
+      '<div class="field"><label>Your referral link</label><div style="display:flex;gap:8px;"><input type="text" id="ref-link" value="' + escapeHtml(refLink) + '" readonly style="flex:1;" /><button class="btn btn-ghost btn-sm" onclick="copyReferralLink()">Copy</button></div></div>' +
+      '<p class="muted" style="font-size:12px;margin-top:10px;">Bonus messages remaining: <strong>' + (u.referralBonusRemaining || 0) + '</strong></p>' +
+    '</div>';
+}
+function copyReferralLink(){
+  var input = $("ref-link");
+  input.select();
+  try{ navigator.clipboard.writeText(input.value); }catch(e){ document.execCommand("copy"); }
+  showToast("Referral link copied.");
+}
+function openUpgradeModal(){
+  openModal(
+    '<h3>SourceVenture Pro — $15/mo</h3>' +
+    '<p class="modal-sub">300 coach messages/24h instead of 10, and an AI-generated business plan for this project.</p>' +
+    '<div class="card" style="padding:16px;margin:14px 0;background:var(--surface-highest);"><p class="muted" style="font-size:13px;margin:0;">Payments aren\'t connected yet — Coming soon. Until then, plans are activated manually by the SourceVenture team.</p></div>' +
+    '<div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="closeModal()">Close</button></div>'
+  );
 }
 
 function renderAccountTab(el){
@@ -2115,7 +2458,7 @@ let HELP_CHAT = { messages: [], open: false };
 
 function helpSystemPrompt(){
   return "You are the SourceVenture Help Assistant — a short, friendly guide to using this specific site. This is a general support chat, not the per-project coach. Answer questions about how the product works and, whenever relevant, tell the user exactly which page to go to using this exact link text so it's clear: Dashboard (#/dashboard), New Project (#/new), Projects (#/projects), a project's AI Coach (#/coach/<id>), Investor Directory (#/investors), Settings → Security (#/settings/security). " +
-    "What this site does: founders publish a project (pitch + public GitHub repo) for free, then get a private AI coach that reads the real repo and can evaluate the startup idea (problem/market, differentiation, execution signal, risk, next step). Founders can generate an investor-facing summary and choose to publish it into a gated directory that opens once enough projects exist. Investors apply for access and browse published summaries. Accounts are free email/password signup; the whole product is free, capped at " + DAILY_CAP + " coach messages per rolling 24h, no paid tier. " +
+    "What this site does: founders publish a project (pitch + optionally a public GitHub repo) for free, then get a private AI coach that reads the real repo and can evaluate the startup idea (problem/market, differentiation, execution signal, risk, next step). Founders can generate an investor-facing summary draft, review it, and explicitly approve it before it's ever visible to an investor, then choose to publish it into a gated directory that opens once enough projects exist. Investors apply for access and browse published summaries. Accounts are free email/password signup; the free plan is capped at " + FREE_DAILY_CAP + " coach messages per rolling 24h, and SourceVenture Pro ($15/mo) raises that to " + PRO_DAILY_CAP + "/24h plus an AI-generated business plan. " +
     "Keep answers to 2-4 sentences unless the user asks for more detail. If you don't know something about the user's specific account or data, say so plainly instead of guessing.";
 }
 function loadHelpChat(){ HELP_CHAT.messages = lsGetJSON("helpChat", []); }
@@ -2191,30 +2534,9 @@ document.addEventListener("mousemove", function(e){
   el.style.setProperty("--my", (e.clientY - r.top) + "px");
 });
 
-// Magnetic buttons: any .magnetic element nudges toward the cursor within a
-// small radius, springs back on leave. Delegated on document (like the
-// .spotlight handler above) so it works on buttons added by any route's
-// render function without a separate init/re-init step per navigation.
-document.addEventListener("mousemove", function(e){
-  document.querySelectorAll(".magnetic").forEach(function(el){
-    var r = el.getBoundingClientRect();
-    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    var dx = e.clientX - cx, dy = e.clientY - cy;
-    var dist = Math.hypot(dx, dy);
-    var radius = Math.max(r.width, r.height) * 1.6;
-    if(dist < radius){
-      var pull = (1 - dist / radius) * 0.2;
-      var tx = Math.max(-12, Math.min(12, dx * pull));
-      var ty = Math.max(-12, Math.min(12, dy * pull));
-      el.style.transform = "translate(" + tx + "px," + ty + "px)";
-    } else if(el.style.transform){
-      el.style.transform = "";
-    }
-  });
-});
-document.addEventListener("mouseleave", function(){
-  document.querySelectorAll(".magnetic").forEach(function(el){ el.style.transform = ""; });
-});
+// (The magnetic-hover effect that pulled buttons toward the cursor was
+// removed — buttons now stay put. The .magnetic class is left on the
+// markup as a no-op hook in case a subtler version is wanted later.)
 
 // Scroll-reveal: fade+rise elements marked .reveal into place once, on entry.
 var revealObserver = new IntersectionObserver(function(entries){
@@ -2242,6 +2564,7 @@ function initCookieBanner(){
 async function initApp(){
   startSitewideDots();
   initCookieBanner();
+
   await ensureMe();
   await router();
 }
