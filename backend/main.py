@@ -46,6 +46,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -59,7 +60,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 load_dotenv()
 
@@ -96,6 +97,29 @@ GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", f"{os.environ.get('P
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
 GITHUB_REDIRECT_URI = os.environ.get("GITHUB_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/github/callback")
+# Cloudflare Turnstile (bot check on signup) — free, no card required, and
+# privacy-respecting (no cross-site tracking the way reCAPTCHA does).
+# Same quiet-until-configured pattern as everything else here: with no
+# secret key set, signup just skips the check entirely rather than 500ing
+# or blocking every signup before Denis has a Turnstile site set up.
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+
+async def verify_turnstile(token: Optional[str], remote_ip: Optional[str]) -> bool:
+    if not TURNSTILE_SECRET_KEY:
+        return True  # not configured yet — don't block signup on it
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(TURNSTILE_VERIFY_URL, data={
+                "secret": TURNSTILE_SECRET_KEY, "response": token, "remoteip": remote_ip or "",
+            })
+            return bool(res.json().get("success"))
+    except httpx.HTTPError as e:
+        log.warning("turnstile verify call failed: %s", e)
+        return False  # fail closed — a Cloudflare outage shouldn't be treated as "human"
 DB_PATH = Path(__file__).parent / "data.db"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
@@ -430,6 +454,28 @@ def require_csrf(request: Request):
         raise HTTPException(status_code=403, detail="Missing or invalid CSRF token")
 
 
+PASSWORD_COMPLEXITY_RE_LETTER = re.compile(r"[A-Za-z]")
+PASSWORD_COMPLEXITY_RE_DIGIT = re.compile(r"\d")
+
+
+def validate_password_strength(password: str) -> str:
+    # "Decently strong" per Denis — not a paranoid policy (no forced
+    # special-character requirement, no password history/rotation), just
+    # ruling out the obvious weak cases min_length=8 alone lets through
+    # (e.g. "password", "12345678").
+    if not PASSWORD_COMPLEXITY_RE_LETTER.search(password) or not PASSWORD_COMPLEXITY_RE_DIGIT.search(password):
+        raise ValueError("Password must contain at least one letter and one number")
+    if password.lower() in _COMMON_WEAK_PASSWORDS:
+        raise ValueError("That password is too common — pick something less guessable")
+    return password
+
+
+_COMMON_WEAK_PASSWORDS = {
+    "password1", "password123", "12345678", "123456789", "1234567890",
+    "qwertyui", "qwerty123", "letmein1", "welcome1", "abc123456", "iloveyou1",
+}
+
+
 # ------------------------------------------------------------------- models
 class SignupRequest(BaseModel):
     email: EmailStr
@@ -439,6 +485,13 @@ class SignupRequest(BaseModel):
     # unknown/malformed code is silently ignored rather than erroring, so a
     # stale or copy-pasted-wrong link never blocks account creation.
     ref: Optional[str] = Field(default=None, max_length=32)
+    # Cloudflare Turnstile response token — required only once
+    # TURNSTILE_SECRET_KEY is actually set (see verify_turnstile below);
+    # None/missing is fine until then so this doesn't brick signup before
+    # Denis creates a Turnstile site.
+    turnstileToken: Optional[str] = Field(default=None, max_length=4000)
+
+    _validate_password = field_validator("password")(validate_password_strength)
 
 
 class LoginRequest(BaseModel):
@@ -575,8 +628,10 @@ async def send_verification_email(email: str, name: str, verify_token: str):
 
 
 @app.post("/api/auth/signup")
-def signup(req: SignupRequest, request: Request, response: Response, background_tasks: BackgroundTasks):
+async def signup(req: SignupRequest, request: Request, response: Response, background_tasks: BackgroundTasks):
     check_rate_limit("signup", client_ip(request), limit=5, window_seconds=600)
+    if not await verify_turnstile(req.turnstileToken, client_ip(request)):
+        raise HTTPException(status_code=400, detail="Bot check failed — please try again")
     conn = get_db()
     try:
         existing = conn.execute("SELECT id FROM users WHERE email = ?", (req.email,)).fetchone()

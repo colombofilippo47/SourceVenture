@@ -10,11 +10,14 @@
      to an attacker-controlled host. connect-src covers the backend
      (localhost in dev; add your deployed API origin here) and GitHub's
      public API; everything else is denied by default-src 'self'. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com https://challenges.cloudflare.com; base-uri 'self'; form-action 'self'" />
 <!-- frame-ancestors is deliberately absent: it's ignored in a <meta> CSP and
      only works as a real HTTP header. Set it (or X-Frame-Options) on whatever
      serves this file in production — the API already sends X-Frame-Options. -->
 <title>SourceVenture — Venture Engineering</title>
+<!-- Cloudflare Turnstile — tiny, safe to always load; the widget itself
+     only renders on the signup form when TURNSTILE_SITE_KEY is set. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
@@ -344,9 +347,36 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .file-row .ftime{color:var(--outline);}
 
 .coach-layout{display:grid;grid-template-columns:1fr 260px;gap:0;background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;height:calc(100vh - var(--topbar-h) - 96px);min-height:520px;}
-@media(max-width:1000px){.coach-layout{grid-template-columns:1fr;height:auto;}}
-.coach-main{display:flex;flex-direction:column;min-width:0;}
-.coach-scroll{flex:1;overflow-y:auto;padding:24px 26px;display:flex;flex-direction:column;gap:18px;}
+/* Bug: "can't scroll down in the chat page to the chatbox." Two real
+   causes, both fixed:
+   (1) .coach-scroll was missing min-height:0 (see that rule) — a flex
+       child defaults to min-height:auto, which lets it grow to fit
+       content forever instead of scrolling.
+   (2) On mobile this grid stacks into 2 rows (chat, then the score/
+       metrics side panel) with implicit `auto` row sizing — with
+       height:auto on the whole grid there was nothing bounding either
+       row at all. Giving .coach-layout a bounded height fixes the outer
+       box, but grid then split that height ~40/60 in the SIDE PANEL's
+       favor (its content happened to be taller), leaving the actual chat
+       only ~160px tall. grid-template-rows below gives the chat row the
+       remaining space (1fr) and caps the side panel at 220px — capped,
+       not auto, so ITS OWN overflow-y:auto (already set on .coach-side)
+       is what handles any overflow there, instead of the row just
+       growing to fit all of it and starving the chat again. */
+@media(max-width:1000px){.coach-layout{grid-template-columns:1fr;grid-template-rows:1fr minmax(0,220px);height:calc(100vh - var(--topbar-h) - 24px);}}
+/* min-height:0 here too — .coach-main is itself a grid item, and grid
+   items default to min-height:auto same as flex items do, so without
+   this it would grow past its assigned grid-row track (446px on mobile)
+   to fit .coach-scroll's content, defeating that fix the same way. */
+.coach-main{display:flex;flex-direction:column;min-width:0;min-height:0;}
+/* min-height:0 is load-bearing here, not decoration — a flex child
+   defaults to min-height:auto, which lets it grow to fit its content
+   instead of respecting flex:1 and actually scrolling. Without this, the
+   pane just gets taller with every message forever (the real bug behind
+   "can't scroll down to the chatbox"), pushing .coach-input-row off the
+   bottom of the layout instead of staying pinned while messages scroll
+   underneath it. */
+.coach-scroll{flex:1;min-height:0;overflow-y:auto;padding:24px 26px;display:flex;flex-direction:column;gap:18px;}
 .cmsg{display:flex;flex-direction:column;gap:4px;max-width:640px;}
 .cmsg.user{align-self:flex-end;align-items:flex-end;}
 .cmsg .cmeta{font-family:var(--font-mono);font-size:10px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.05em;}
@@ -536,6 +566,12 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
    SOURCEVENTURE — core constants, state, utils, storage, APIs
    ============================================================ */
 const API_BASE = window.SOURCEVENTURE_API_BASE || "http://localhost:8000";
+// Cloudflare Turnstile site key — public, safe to ship client-side (unlike
+// the secret key, which only ever lives in the backend's env). Empty until
+// Denis creates a Turnstile site; the widget below simply doesn't render
+// when this is blank, same "quiet until configured" pattern as Google/
+// GitHub sign-in.
+const TURNSTILE_SITE_KEY = window.SOURCEVENTURE_TURNSTILE_SITE_KEY || "";
 // First Drop (2026-09-02): free cap is 10/rolling-24h (was 25); Pro is a
 // 300/24h soft ceiling — see backend main.py's consume_coach_allowance for
 // the real, server-enforced version of this same number. currentDailyCap()
@@ -906,6 +942,8 @@ function renderAuthPage(root, mode){
         '<div class="auth-field auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="' + (isSignup ? "new-password" : "current-password") + '" />' +
           '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="' + (isSignup ? "Create account" : "Sign in") + '"><span class="material-symbols-outlined">arrow_forward</span></button>' +
         '</div>' +
+        (isSignup ? '<p class="muted" style="font-size:11px;margin-top:6px;">At least 8 characters, with a letter and a number.</p>' : "") +
+        (isSignup && TURNSTILE_SITE_KEY ? '<div id="turnstile-widget" style="margin-top:12px;"></div>' : "") +
       '</form>' +
       '<p class="auth-error" id="auth-error"></p>' +
       '<p class="auth-switch">' + (isSignup ? "Already have an account? " : "New here? ") +
@@ -914,6 +952,24 @@ function renderAuthPage(root, mode){
   if(__authCanvasStop) __authCanvasStop();
   __authCanvasStop = startDotCanvas($("auth-canvas"));
   setTimeout(function(){ var f = $("auth-name") || $("auth-email"); if(f) f.focus(); }, 350);
+  window.__turnstileToken = null;
+  if(isSignup && TURNSTILE_SITE_KEY) renderTurnstileWidget();
+}
+// Explicit render (not implicit/auto) — this app injects the form via
+// innerHTML, which Turnstile's own auto-scan only catches on the initial
+// page load, not on later SPA navigations. Retries briefly since api.js
+// loads async and may not be ready the first time this runs.
+function renderTurnstileWidget(attempt){
+  var el = $("turnstile-widget");
+  if(!el) return;
+  if(!window.turnstile){ if((attempt||0) < 20) setTimeout(function(){ renderTurnstileWidget((attempt||0)+1); }, 150); return; }
+  el.innerHTML = "";
+  window.turnstile.render(el, {
+    sitekey: TURNSTILE_SITE_KEY,
+    theme: currentTheme() === "light" ? "light" : "dark",
+    callback: function(token){ window.__turnstileToken = token; },
+    "expired-callback": function(){ window.__turnstileToken = null; },
+  });
 }
 
 function renderAuthCheckEmail(email){
@@ -951,7 +1007,8 @@ async function submitAuthForm(mode){
   var err = $("auth-error");
   err.textContent = "";
   if((isSignup && !name) || !email || !password){ err.textContent = "Fill in every field."; return; }
-  if(isSignup && password.length < 8){ err.textContent = "Password must be at least 8 characters."; return; }
+  if(isSignup && (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))){ err.textContent = "Password needs at least 8 characters, with a letter and a number."; return; }
+  if(isSignup && TURNSTILE_SITE_KEY && !window.__turnstileToken){ err.textContent = "Please complete the verification check."; return; }
   var btn = $("auth-submit"); btn.disabled = true;
   try{
     var url = API_BASE + (isSignup ? "/api/auth/signup" : "/api/auth/login");
@@ -960,7 +1017,7 @@ async function submitAuthForm(mode){
       var qIdx = window.location.hash.indexOf("?");
       if(qIdx !== -1) refCode = new URLSearchParams(window.location.hash.slice(qIdx+1)).get("ref");
     }
-    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined } : { email:email, password:password };
+    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined, turnstileToken: window.__turnstileToken || undefined } : { email:email, password:password };
     var res = await fetch(url, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || (isSignup ? "Could not create account" : "Invalid email or password"));
@@ -1686,6 +1743,25 @@ function requestIdeaEvaluation(){
    auto-rerate (fires when you save real pitch changes, no button needed)
    actually shows up here. ---- */
 function scoreColor(n){ return n>=70 ? "var(--primary)" : n>=45 ? "var(--tertiary)" : "var(--error)"; }
+// Circular ring for the overall Source Score — Denis: "like a circle ui
+// idk." Plain SVG (no chart library — this project has no build step),
+// same 0-100 number the number-only version showed, just as a radial
+// progress ring instead of flat text. Sub-scores stay as bars (a 4-way
+// mini-ring grid at this size would be harder to read, not easier).
+function scoreRingHtml(score, size){
+  size = size || 108;
+  var stroke = Math.max(6, Math.round(size * 0.09));
+  var r = (size - stroke) / 2;
+  var c = 2 * Math.PI * r;
+  var offset = c * (1 - Math.max(0, Math.min(100, score)) / 100);
+  var color = scoreColor(score);
+  var mid = size / 2;
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" style="transform:rotate(-90deg);flex:none;">' +
+      '<circle cx="' + mid + '" cy="' + mid + '" r="' + r + '" fill="none" stroke="var(--surface-highest)" stroke-width="' + stroke + '" />' +
+      '<circle cx="' + mid + '" cy="' + mid + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + stroke + '" stroke-linecap="round" ' +
+        'stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '" style="transition:stroke-dashoffset .6s var(--ease-out-expo);" />' +
+    '</svg>';
+}
 function scoreBarHtml(label, val){
   return '<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--on-surface-variant);margin-bottom:3px;"><span>' + label + '</span><span class="mono">' + val + '</span></div>' +
     '<div style="height:5px;border-radius:20px;background:var(--surface-highest);overflow:hidden;"><div style="height:100%;width:' + val + '%;background:' + scoreColor(val) + ';border-radius:20px;transition:width .5s ease;"></div></div></div>';
@@ -1695,11 +1771,17 @@ function ratingBlockHtml(r, p){
     return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Get my Source Score</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge AI council (VC, technical due-diligence, growth analyst), evaluating actual startup evidence — never likes, views or popularity.</p>';
   }
   var improvements = (r.improvements||[]).map(function(imp){ return '<li style="margin-bottom:4px;">' + escapeHtml(imp) + '</li>'; }).join("");
-  return '<div class="muted mono" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Source Score</div>' +
-    '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">' +
-      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '<span style="font-size:15px;">/100</span></div>' +
-      '<div class="muted" style="font-size:13px;">' + r.overall + '%</div></div>' +
-    '<p class="muted mono" style="font-size:10px;margin-bottom:12px;">' + (r.judges||3) + '-judge council · median score</p>' +
+  return '<div class="muted mono" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">Source Score</div>' +
+    '<div style="display:flex;align-items:center;gap:16px;margin-bottom:6px;">' +
+      '<div style="position:relative;width:108px;height:108px;flex:none;">' + scoreRingHtml(r.overall, 108) +
+        '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">' +
+          '<span style="font-family:var(--font-display);font-size:26px;line-height:1;color:' + scoreColor(r.overall) + ';">' + r.overall + '</span>' +
+          '<span class="muted mono" style="font-size:10px;margin-top:2px;">/100</span>' +
+        '</div>' +
+      '</div>' +
+      '<div><div class="muted" style="font-size:15px;">' + r.overall + '%</div>' +
+        '<p class="muted mono" style="font-size:10px;margin-top:2px;">' + (r.judges||3) + '-judge council<br/>median score</p></div>' +
+    '</div>' +
     scoreBarHtml("Problem &amp; market", r.scores.problem_market) +
     scoreBarHtml("Differentiation", r.scores.differentiation) +
     scoreBarHtml("Execution signal", r.scores.execution_signal) +
