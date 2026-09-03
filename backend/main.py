@@ -21,15 +21,16 @@ Data model (SQLite, one file: data.db)
 
 Auth
 ----
-Email/password accounts, plus Google Sign-In (OAuth2 authorization-code
-flow, see /api/auth/google/start + /callback — 503s cleanly until
-GOOGLE_CLIENT_ID/SECRET are set; only Denis can create those in Google
-Cloud Console). Passwords are hashed with PBKDF2-HMAC-SHA256 (200k
+Email/password accounts, plus Google and GitHub Sign-In (both OAuth2
+authorization-code flow — see /api/auth/google|github/start + /callback,
+each 503s cleanly until its own CLIENT_ID/SECRET are set; only Denis can
+create those, in Google Cloud Console / github.com/settings/developers
+respectively). Passwords are hashed with PBKDF2-HMAC-SHA256 (200k
 iterations) plus a random salt — never stored or logged in plain text.
 Logging in sets an httpOnly, SameSite=Lax session cookie (`session_token`)
 that identifies a row in `sessions`; JavaScript never reads the token
 directly, which limits the blast radius of an XSS bug. Email verification
-is real (see /api/auth/verify/{token}); Google accounts are auto-verified.
+is real (see /api/auth/verify/{token}); Google/GitHub accounts are auto-verified.
 
 Admin
 -----
@@ -88,6 +89,13 @@ PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/google/callback")
+# Same pattern, same reasoning — a GitHub OAuth App is free and 1-minute to
+# create (github.com/settings/developers), but still only Denis can create
+# it (needs his own GitHub account). /api/auth/github/start 503s cleanly
+# until these are set.
+GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
+GITHUB_REDIRECT_URI = os.environ.get("GITHUB_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/github/callback")
 DB_PATH = Path(__file__).parent / "data.db"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
@@ -161,15 +169,17 @@ def init_db():
                      "ALTER TABLE users ADD COLUMN verify_token TEXT",
                      "ALTER TABLE users ADD COLUMN avatar_data_url TEXT",
                      "ALTER TABLE users ADD COLUMN google_id TEXT",
+                     "ALTER TABLE users ADD COLUMN github_id TEXT",
                      "ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'"):
             try:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass
-        # Partial unique index (SQLite has no ADD CONSTRAINT) — only enforces
-        # uniqueness where google_id is actually set, so it doesn't collide
-        # on the many NULL values from password-only accounts.
+        # Partial unique indexes (SQLite has no ADD CONSTRAINT) — only
+        # enforce uniqueness where the column is actually set, so they don't
+        # collide on the many NULL values from password-only accounts.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -648,6 +658,125 @@ async def google_callback(request: Request, response: Response, code: str = "", 
     set_session_cookie(redirect, token)
     redirect.delete_cookie(GOOGLE_STATE_COOKIE, path="/")
     log.info("google login: user_id=%s", row[0])
+    return redirect
+
+
+# --------------------------------------------------------------- GitHub SSO
+# Same manual OAuth2 flow as Google above, same reasoning. Two real
+# GitHub-specific wrinkles Google doesn't have:
+#  - the token endpoint returns form-encoded by default; Accept: application/
+#    json is required to get JSON back.
+#  - GET /user often omits `email` (private-by-default on GitHub) even
+#    though the userinfo call itself succeeds — falls back to GET
+#    /user/emails and picks the verified primary, same as any real GitHub
+#    OAuth integration has to.
+GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
+GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
+GITHUB_USER_URL = "https://api.github.com/user"
+GITHUB_EMAILS_URL = "https://api.github.com/user/emails"
+GITHUB_STATE_COOKIE = "github_oauth_state"
+
+
+@app.get("/api/auth/github/start")
+def github_start(response: Response):
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="GitHub sign-in isn't configured yet")
+    state = secrets.token_urlsafe(24)
+    response.set_cookie(
+        key=GITHUB_STATE_COOKIE, value=state, max_age=600, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "redirect_uri": GITHUB_REDIRECT_URI,
+        "scope": "read:user user:email",
+        "state": state,
+    }
+    return RedirectResponse(f"{GITHUB_AUTH_URL}?{urlencode(params)}")
+
+
+@app.get("/api/auth/github/callback")
+async def github_callback(request: Request, response: Response, code: str = "", state: str = "", error: str = ""):
+    def fail(reason: str):
+        return RedirectResponse(f"{PUBLIC_APP_URL}/#/signin?github_error={reason}")
+
+    if error:
+        log.info("github oauth error from provider: %s", error)
+        return fail("denied")
+    cookie_state = request.cookies.get(GITHUB_STATE_COOKIE)
+    if not code or not state or not cookie_state or state != cookie_state:
+        log.warning("github oauth state mismatch or missing code")
+        return fail("state_mismatch")
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        return fail("not_configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            token_res = await client.post(
+                GITHUB_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "redirect_uri": GITHUB_REDIRECT_URI,
+                },
+                headers={"Accept": "application/json"},
+            )
+            token_res.raise_for_status()
+            access_token = token_res.json().get("access_token")
+            if not access_token:
+                return fail("token_exchange_failed")
+            auth_header = {"Authorization": f"Bearer {access_token}", "User-Agent": "SourceVenture"}
+            user_res = await client.get(GITHUB_USER_URL, headers=auth_header)
+            user_res.raise_for_status()
+            info = user_res.json()
+            email = info.get("email")
+            if not email:
+                # Private email — fall back to the verified primary from
+                # /user/emails (needs the user:email scope requested above).
+                emails_res = await client.get(GITHUB_EMAILS_URL, headers=auth_header)
+                if emails_res.status_code == 200:
+                    candidates = emails_res.json()
+                    primary = next((e for e in candidates if e.get("primary") and e.get("verified")), None)
+                    email = (primary or next((e for e in candidates if e.get("verified")), {})).get("email")
+    except httpx.HTTPError as e:
+        log.warning("github oauth token/userinfo call failed: %s", e)
+        return fail("provider_error")
+
+    github_id = str(info.get("id") or "")
+    name = (info.get("name") or info.get("login") or (email.split("@")[0] if email else "GitHub user")).strip()[:120]
+    if not github_id or not email:
+        return fail("incomplete_profile")
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE github_id = ?", (github_id,)).fetchone()
+        if not row:
+            # Same link-by-verified-email rule as Google — GitHub already
+            # confirmed this email address, so linking rather than
+            # duplicating is safe.
+            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = ?", (email,)).fetchone()
+            if existing:
+                conn.execute("UPDATE users SET github_id = ?, email_verified = 1 WHERE id = ?", (github_id, existing[0]))
+                row = (existing[0], existing[1], existing[2], 1)
+            else:
+                user_id = secrets.token_hex(12)
+                random_password_hash = hash_password(secrets.token_urlsafe(32))
+                conn.execute(
+                    "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, github_id, auth_provider) "
+                    "VALUES (?, ?, ?, ?, ?, 1, ?, 'github')",
+                    (user_id, email, name, random_password_hash, int(time.time()), github_id),
+                )
+                row = (user_id, email, name, 1)
+        token = create_session(conn, row[0])
+        conn.commit()
+    finally:
+        conn.close()
+
+    redirect = RedirectResponse(f"{PUBLIC_APP_URL}/#/dashboard")
+    set_session_cookie(redirect, token)
+    redirect.delete_cookie(GITHUB_STATE_COOKIE, path="/")
+    log.info("github login: user_id=%s", row[0])
     return redirect
 
 
