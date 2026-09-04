@@ -12,8 +12,10 @@ or writes to the shared database — the frontend is a static single-page app
 that talks to these HTTP endpoints. See README.md for the full endpoint list
 and how to run everything locally.
 
-Data model (SQLite, one file: data.db)
----------------------------------------
+Data model (Postgres, via DATABASE_URL — a Supabase free-tier project by
+default; migrated 2026-09-04 off local SQLite so this survives deployment
+to a serverless host with no persistent filesystem)
+---------------------------------------------------------------------------
 - users:    one row per account (email + salted/hashed password)
 - sessions: one row per login, referenced by the `session_token` cookie
 - projects: one row per project, JSON blob in `data` plus a few indexed
@@ -48,14 +50,13 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
 import threading
 import time
-from pathlib import Path
 from urllib.parse import urlencode
 from typing import List, Optional
 
 import httpx
+import psycopg
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -120,7 +121,23 @@ async def verify_turnstile(token: Optional[str], remote_ip: Optional[str]) -> bo
     except httpx.HTTPError as e:
         log.warning("turnstile verify call failed: %s", e)
         return False  # fail closed — a Cloudflare outage shouldn't be treated as "human"
-DB_PATH = Path(__file__).parent / "data.db"
+# 2026-09-04: migrated off local SQLite (data.db) to Postgres (Supabase,
+# free tier) — Denis: "i need the free host... a host with no limits like
+# vercel... deploy everything". SQLite's file couldn't survive Vercel's
+# ephemeral serverless filesystem; a real remote Postgres can. Every
+# get_db()/init_db() connection below is a fresh, short-lived one (matches
+# a serverless function's own request-scoped lifecycle) through Supabase's
+# transaction-mode pgbouncer pooler — prepare_threshold=None disables
+# psycopg's server-side prepared statements, which don't survive being
+# routed to a different backend connection between transactions under
+# transaction-mode pooling.
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def db_connect():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not set — see .env.example")
+    return psycopg.connect(DATABASE_URL, prepare_threshold=None)
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
@@ -167,12 +184,11 @@ async def security_headers(request: Request, call_next):
 def init_db():
     # Schema creation used to run inline in get_db(), i.e. on EVERY request —
     # every signup, login, project fetch, coach message, etc. paid for 4x
-    # "CREATE TABLE IF NOT EXISTS" plus 2 probe "ALTER TABLE" statements
-    # (the latter relying on catching sqlite3.OperationalError since SQLite
-    # has no "ADD COLUMN IF NOT EXISTS") before doing any real work. None of
-    # that is conditional on anything changing between requests, so it now
-    # runs exactly once at process startup instead.
-    conn = sqlite3.connect(DB_PATH)
+    # "CREATE TABLE IF NOT EXISTS" plus a batch of "ADD COLUMN IF NOT
+    # EXISTS" statements before doing any real work. None of that is
+    # conditional on anything changing between requests, so it now runs
+    # exactly once at process startup instead.
+    conn = db_connect()
     try:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS users (
@@ -180,37 +196,39 @@ def init_db():
                 email TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
+                created_at BIGINT NOT NULL,
                 email_verified INTEGER NOT NULL DEFAULT 0,
                 verify_token TEXT
             )"""
         )
-        # SQLite has no "ADD COLUMN IF NOT EXISTS" — this only matters for a
-        # data.db created before email verification/Google sign-in/avatars
-        # existed; a fresh DB already has every column from the CREATE TABLE
-        # above and these no-op.
-        for stmt in ("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN verify_token TEXT",
-                     "ALTER TABLE users ADD COLUMN avatar_data_url TEXT",
-                     "ALTER TABLE users ADD COLUMN google_id TEXT",
-                     "ALTER TABLE users ADD COLUMN github_id TEXT",
-                     "ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'",
+        # Postgres (unlike SQLite) supports "ADD COLUMN IF NOT EXISTS"
+        # natively — this only matters for a database created before email
+        # verification/Google sign-in/avatars existed; a fresh DB already
+        # has every column from the CREATE TABLE above and these no-op.
+        # (2026-09-04: migrated off SQLite's try/except-OperationalError
+        # dance, which this native IF NOT EXISTS replaces outright.)
+        for stmt in ("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data_url TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS github_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password'",
                      # First Drop (2026-09-02): Free/Pro plan — 'plan' is the
                      # only source of truth for gating (coach limit, business
                      # plan access). No Stripe yet: an admin flips this
                      # manually via POST /api/admin/users/{id}/plan until
                      # real billing is connected — see that endpoint's
                      # docstring for why this is deliberately temporary.
-                     "ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free'",
                      # Referral program: a short public code every user has
                      # (shared as a signup link), who referred them, a simple
                      # bonus-message counter (NOT a credit system — one plain
                      # integer, decremented one at a time once the daily cap
                      # is hit), and two one-shot flags so the 3-referral and
                      # 5-referral rewards can never be double-awarded.
-                     "ALTER TABLE users ADD COLUMN referral_code TEXT",
-                     "ALTER TABLE users ADD COLUMN referred_by_user_id TEXT",
-                     "ALTER TABLE users ADD COLUMN referral_bonus_remaining INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by_user_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_bonus_remaining INTEGER NOT NULL DEFAULT 0",
                      # Early-founder discount (2026-09): the first
                      # USER_THRESHOLD signups (same cohort that unlocks the
                      # investor directory — Denis: "link it to the page that
@@ -221,13 +239,19 @@ def init_db():
                      # Stripe yet (see plan column above) — this only tracks
                      # eligibility for now; the actual discounted charge
                      # still needs wiring up whenever real billing lands.
-                     "ALTER TABLE users ADD COLUMN is_founding_member INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN referral_milestone3_awarded INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0"):
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError:
-                pass
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_milestone3_awarded INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0",
+                     # One-time 5% Pro discount for referrers (2026-09-04,
+                     # Denis: "gets more usage and a 5% discount one time
+                     # only in subscription") — stacks additively with the
+                     # founding-member 50% (both are just percentages off
+                     # the $15 base once real billing exists), awarded
+                     # alongside the first referral milestone since that
+                     # flag already guarantees it can only ever fire once.
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_discount_pct INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_notifications INTEGER NOT NULL DEFAULT 1"):
+            conn.execute(stmt)
         # Partial unique indexes (SQLite has no ADD CONSTRAINT) — only
         # enforce uniqueness where the column is actually set, so they don't
         # collide on the many NULL values from password-only accounts.
@@ -238,8 +262,8 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL
+                created_at BIGINT NOT NULL,
+                expires_at BIGINT NOT NULL
             )"""
         )
         conn.execute(
@@ -247,8 +271,8 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT,
                 status TEXT NOT NULL,
-                published_at INTEGER,
-                updated_at INTEGER NOT NULL,
+                published_at BIGINT,
+                updated_at BIGINT NOT NULL,
                 data TEXT NOT NULL
             )"""
         )
@@ -267,8 +291,8 @@ def init_db():
                 name TEXT NOT NULL,
                 firm TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
-                created_at INTEGER NOT NULL,
-                decided_at INTEGER
+                created_at BIGINT NOT NULL,
+                decided_at BIGINT
             )"""
         )
         # Server-side rating storage — was localStorage-only before, which
@@ -284,7 +308,7 @@ def init_db():
                 biggest_risk TEXT,
                 improvements TEXT NOT NULL,
                 judges INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at BIGINT NOT NULL
             )"""
         )
         # First-party analytics. Deliberately minimal and privacy-preserving:
@@ -294,10 +318,10 @@ def init_db():
         # to honour by simply never collecting it than by deleting it later.
         conn.execute(
             """CREATE TABLE IF NOT EXISTS analytics_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 project_id TEXT,
-                created_at INTEGER NOT NULL
+                created_at BIGINT NOT NULL
             )"""
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_name_time ON analytics_events (name, created_at)")
@@ -309,7 +333,20 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS business_plans (
                 project_id TEXT PRIMARY KEY,
                 content TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at BIGINT NOT NULL
+            )"""
+        )
+        # 2026-09-04 (Denis: "make it the notificate me button works") — a
+        # deliberately lighter-weight sibling to investor_applications: no
+        # login, no name/firm, just "email me when the directory opens".
+        # The real investor-apply flow (name+firm, requires an account) is
+        # unchanged and still gates actual directory access.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS directory_notify_signups (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                created_at BIGINT NOT NULL,
+                notified_at BIGINT
             )"""
         )
         conn.commit()
@@ -323,7 +360,7 @@ def _on_startup():
 
 
 def get_db():
-    return sqlite3.connect(DB_PATH)
+    return db_connect()
 
 
 # ------------------------------------------------------------- rate limiting
@@ -383,7 +420,7 @@ def consume_coach_allowance(current_user: dict):
         try:
             cur = conn.execute(
                 "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining - 1 "
-                "WHERE id = ? AND referral_bonus_remaining > 0",
+                "WHERE id = %s AND referral_bonus_remaining > 0",
                 (current_user["id"],),
             )
             conn.commit()
@@ -430,6 +467,8 @@ def user_public(row) -> dict:
         "referralCode": row[6] if len(row) > 6 else None,
         "referralBonusRemaining": row[7] if len(row) > 7 and row[7] is not None else 0,
         "isFoundingMember": bool(row[8]) if len(row) > 8 else False,
+        "referralDiscountPct": row[9] if len(row) > 9 and row[9] else 0,
+        "emailNotifications": bool(row[10]) if len(row) > 10 else True,
     }
 
 
@@ -466,17 +505,27 @@ def require_csrf(request: Request):
         raise HTTPException(status_code=403, detail="Missing or invalid CSRF token")
 
 
-PASSWORD_COMPLEXITY_RE_LETTER = re.compile(r"[A-Za-z]")
+PASSWORD_COMPLEXITY_RE_UPPER = re.compile(r"[A-Z]")
+PASSWORD_COMPLEXITY_RE_LOWER = re.compile(r"[a-z]")
 PASSWORD_COMPLEXITY_RE_DIGIT = re.compile(r"\d")
+PASSWORD_COMPLEXITY_RE_SPECIAL = re.compile(r"[^A-Za-z0-9]")
 
 
 def validate_password_strength(password: str) -> str:
-    # "Decently strong" per Denis — not a paranoid policy (no forced
-    # special-character requirement, no password history/rotation), just
-    # ruling out the obvious weak cases min_length=8 alone lets through
-    # (e.g. "password", "12345678").
-    if not PASSWORD_COMPLEXITY_RE_LETTER.search(password) or not PASSWORD_COMPLEXITY_RE_DIGIT.search(password):
-        raise ValueError("Password must contain at least one letter and one number")
+    # 2026-09-04 tightened (Denis: "make sure the password thing is decently
+    # strict") — was letter+digit only. Now requires upper+lower+digit+
+    # special and a 10-char floor (SignupRequest.password still carries the
+    # hard min_length=8/max_length=200 field bounds; this raises first with
+    # a clearer message for the 8-9 char case).
+    if len(password) < 10:
+        raise ValueError("Password must be at least 10 characters")
+    if (
+        not PASSWORD_COMPLEXITY_RE_UPPER.search(password)
+        or not PASSWORD_COMPLEXITY_RE_LOWER.search(password)
+        or not PASSWORD_COMPLEXITY_RE_DIGIT.search(password)
+        or not PASSWORD_COMPLEXITY_RE_SPECIAL.search(password)
+    ):
+        raise ValueError("Password must contain an uppercase letter, a lowercase letter, a number, and a symbol")
     if password.lower() in _COMMON_WEAK_PASSWORDS:
         raise ValueError("That password is too common — pick something less guessable")
     return password
@@ -502,6 +551,12 @@ class SignupRequest(BaseModel):
     # None/missing is fine until then so this doesn't brick signup before
     # Denis creates a Turnstile site.
     turnstileToken: Optional[str] = Field(default=None, max_length=4000)
+    # Opt-in checkbox at signup (Denis: "make sure people select get
+    # notifications in email when create account and can change that in
+    # settings") — defaults on so existing behavior (verification email,
+    # etc.) is unaffected if the frontend ever omits the field; changeable
+    # later via PUT /api/auth/profile.
+    emailNotifications: bool = True
 
     _validate_password = field_validator("password")(validate_password_strength)
 
@@ -579,13 +634,13 @@ def get_current_user(request: Request):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT user_id, expires_at FROM sessions WHERE token = ?", (token,)
+            "SELECT user_id, expires_at FROM sessions WHERE token = %s", (token,)
         ).fetchone()
         if not row or row[1] < int(time.time()):
             raise HTTPException(status_code=401, detail="Session expired or invalid")
         user = conn.execute(
-            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member "
-            "FROM users WHERE id = ?", (row[0],)
+            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member, referral_discount_pct, email_notifications "
+            "FROM users WHERE id = %s", (row[0],)
         ).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
@@ -604,7 +659,7 @@ def create_session(conn, user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
     conn.execute(
-        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (%s, %s, %s, %s)",
         (token, user_id, now, now + SESSION_TTL_SECONDS),
     )
     return token
@@ -665,7 +720,7 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
         raise HTTPException(status_code=400, detail="Bot check failed — please try again")
     conn = get_db()
     try:
-        existing = conn.execute("SELECT id FROM users WHERE email = ?", (req.email,)).fetchone()
+        existing = conn.execute("SELECT id FROM users WHERE email = %s", (req.email,)).fetchone()
         if existing:
             raise HTTPException(status_code=409, detail="An account with this email already exists")
         user_id = secrets.token_hex(12)
@@ -673,7 +728,7 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
         referral_code = secrets.token_urlsafe(6)
         referred_by = None
         if req.ref:
-            ref_row = conn.execute("SELECT id FROM users WHERE referral_code = ?", (req.ref,)).fetchone()
+            ref_row = conn.execute("SELECT id FROM users WHERE referral_code = %s", (req.ref,)).fetchone()
             if ref_row:
                 referred_by = ref_row[0]
         # Founding-member discount eligibility — computed once, right here,
@@ -683,9 +738,10 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
         is_founding = 1 if existing_users < USER_THRESHOLD else 0
         conn.execute(
             "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, verify_token, "
-            "referral_code, referred_by_user_id, is_founding_member) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+            "referral_code, referred_by_user_id, is_founding_member, email_notifications) "
+            "VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s)",
             (user_id, req.email, req.name, hash_password(req.password), int(time.time()), verify_token,
-             referral_code, referred_by, is_founding),
+             referral_code, referred_by, is_founding, 1 if req.emailNotifications else 0),
         )
         token = create_session(conn, user_id)
         conn.commit()
@@ -696,7 +752,8 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
         # unverified; the frontend can show a "verify your email" nudge.
         return {"user": {"id": user_id, "email": req.email, "name": req.name, "emailVerified": False,
                           "plan": "free", "referralCode": referral_code, "referralBonusRemaining": 0,
-                          "isFoundingMember": bool(is_founding)}}
+                          "isFoundingMember": bool(is_founding), "referralDiscountPct": 0,
+                          "emailNotifications": bool(req.emailNotifications)}}
     finally:
         conn.close()
 
@@ -705,10 +762,10 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
 def verify_email(token: str):
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM users WHERE verify_token = ?", (token,)).fetchone()
+        row = conn.execute("SELECT id FROM users WHERE verify_token = %s", (token,)).fetchone()
         if not row:
             raise HTTPException(status_code=400, detail="Invalid or already-used verification link")
-        conn.execute("UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?", (row[0],))
+        conn.execute("UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = %s", (row[0],))
         conn.commit()
         return {"ok": True}
     finally:
@@ -728,7 +785,7 @@ def resend_verification(request: Request, background_tasks: BackgroundTasks, cur
     conn = get_db()
     try:
         verify_token = secrets.token_urlsafe(24)
-        conn.execute("UPDATE users SET verify_token = ? WHERE id = ?", (verify_token, current_user["id"]))
+        conn.execute("UPDATE users SET verify_token = %s WHERE id = %s", (verify_token, current_user["id"]))
         conn.commit()
         background_tasks.add_task(send_verification_email, current_user["email"], current_user["name"], verify_token)
         return {"ok": True}
@@ -747,7 +804,7 @@ def login(req: LoginRequest, request: Request, response: Response):
     try:
         row = conn.execute(
             "SELECT id, email, name, password_hash, email_verified, plan, referral_code, referral_bonus_remaining "
-            "FROM users WHERE email = ?", (req.email,)
+            "FROM users WHERE email = %s", (req.email,)
         ).fetchone()
         if not row or not verify_password(req.password, row[3]):
             log.info("failed login attempt for email=%s", req.email)
@@ -781,17 +838,13 @@ GOOGLE_STATE_COOKIE = "google_oauth_state"
 
 
 @app.get("/api/auth/google/start")
-def google_start(response: Response):
+def google_start():
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         # Honest failure, not a broken redirect to a client_id-less Google
         # URL — matches this file's existing pattern for unset third-party
         # keys (see send_verification_email's RESEND_API_KEY check).
         raise HTTPException(status_code=503, detail="Google sign-in isn't configured yet")
     state = secrets.token_urlsafe(24)
-    response.set_cookie(
-        key=GOOGLE_STATE_COOKIE, value=state, max_age=600, httponly=True,
-        secure=COOKIE_SECURE, samesite="lax", path="/",
-    )
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -800,7 +853,23 @@ def google_start(response: Response):
         "state": state,
         "prompt": "select_account",
     }
-    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    redirect = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    # 2026-09-05 real bug fix (Denis: "google sign in... link expire[d]...
+    # every time"): this cookie used to be set on the `response: Response`
+    # FastAPI injects for exactly this purpose — but the function was
+    # RETURNING a separate, brand-new RedirectResponse instead of that
+    # injected one. FastAPI/Starlette only sends headers/cookies that live
+    # on the object actually returned; whatever was set on the injected
+    # `response` was silently discarded. Confirmed live: /start never sent
+    # a Set-Cookie at all, so /callback always saw no state cookie and
+    # always failed with "state_mismatch" — not a real expiry, every
+    # single attempt failed this way. Set the cookie directly on the
+    # response being returned instead.
+    redirect.set_cookie(
+        key=GOOGLE_STATE_COOKIE, value=state, max_age=600, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    return redirect
 
 
 @app.get("/api/auth/google/callback")
@@ -848,16 +917,16 @@ async def google_callback(request: Request, response: Response, code: str = "", 
 
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE google_id = ?", (google_id,)).fetchone()
+        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE google_id = %s", (google_id,)).fetchone()
         if not row:
             # Not linked by google_id yet — check for an existing
             # password-account with the same email and link it (Google has
             # already verified this email, so this isn't a spoofing risk
             # the way an unverified claim would be), rather than creating a
             # second, confusing duplicate account.
-            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = ?", (email,)).fetchone()
+            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = %s", (email,)).fetchone()
             if existing:
-                conn.execute("UPDATE users SET google_id = ?, email_verified = 1 WHERE id = ?", (google_id, existing[0]))
+                conn.execute("UPDATE users SET google_id = %s, email_verified = 1 WHERE id = %s", (google_id, existing[0]))
                 row = (existing[0], existing[1], existing[2], 1)
             else:
                 user_id = secrets.token_hex(12)
@@ -868,7 +937,7 @@ async def google_callback(request: Request, response: Response, code: str = "", 
                 random_password_hash = hash_password(secrets.token_urlsafe(32))
                 conn.execute(
                     "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, google_id, auth_provider) "
-                    "VALUES (?, ?, ?, ?, ?, 1, ?, 'google')",
+                    "VALUES (%s, %s, %s, %s, %s, 1, %s, 'google')",
                     (user_id, email, name, random_password_hash, int(time.time()), google_id),
                 )
                 row = (user_id, email, name, 1)
@@ -901,21 +970,24 @@ GITHUB_STATE_COOKIE = "github_oauth_state"
 
 
 @app.get("/api/auth/github/start")
-def github_start(response: Response):
+def github_start():
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="GitHub sign-in isn't configured yet")
     state = secrets.token_urlsafe(24)
-    response.set_cookie(
-        key=GITHUB_STATE_COOKIE, value=state, max_age=600, httponly=True,
-        secure=COOKIE_SECURE, samesite="lax", path="/",
-    )
     params = {
         "client_id": GITHUB_CLIENT_ID,
         "redirect_uri": GITHUB_REDIRECT_URI,
         "scope": "read:user user:email",
         "state": state,
     }
-    return RedirectResponse(f"{GITHUB_AUTH_URL}?{urlencode(params)}")
+    redirect = RedirectResponse(f"{GITHUB_AUTH_URL}?{urlencode(params)}")
+    # Same real bug as google_start above — cookie must be set on the
+    # object actually returned, not the separately-injected `response`.
+    redirect.set_cookie(
+        key=GITHUB_STATE_COOKIE, value=state, max_age=600, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    return redirect
 
 
 @app.get("/api/auth/github/callback")
@@ -973,21 +1045,21 @@ async def github_callback(request: Request, response: Response, code: str = "", 
 
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE github_id = ?", (github_id,)).fetchone()
+        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE github_id = %s", (github_id,)).fetchone()
         if not row:
             # Same link-by-verified-email rule as Google — GitHub already
             # confirmed this email address, so linking rather than
             # duplicating is safe.
-            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = ?", (email,)).fetchone()
+            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = %s", (email,)).fetchone()
             if existing:
-                conn.execute("UPDATE users SET github_id = ?, email_verified = 1 WHERE id = ?", (github_id, existing[0]))
+                conn.execute("UPDATE users SET github_id = %s, email_verified = 1 WHERE id = %s", (github_id, existing[0]))
                 row = (existing[0], existing[1], existing[2], 1)
             else:
                 user_id = secrets.token_hex(12)
                 random_password_hash = hash_password(secrets.token_urlsafe(32))
                 conn.execute(
                     "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, github_id, auth_provider) "
-                    "VALUES (?, ?, ?, ?, ?, 1, ?, 'github')",
+                    "VALUES (%s, %s, %s, %s, %s, 1, %s, 'github')",
                     (user_id, email, name, random_password_hash, int(time.time()), github_id),
                 )
                 row = (user_id, email, name, 1)
@@ -1009,7 +1081,7 @@ def logout(request: Request, response: Response, _csrf=Depends(require_csrf)):
     if token:
         conn = get_db()
         try:
-            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.execute("DELETE FROM sessions WHERE token = %s", (token,))
             conn.commit()
         finally:
             conn.close()
@@ -1025,6 +1097,7 @@ def me(current_user=Depends(get_current_user)):
 class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     avatarDataUrl: Optional[str] = None  # data:image/...;base64,... or "" to remove
+    emailNotifications: Optional[bool] = None
 
 
 MAX_AVATAR_BYTES = 600_000  # ~600KB — a small profile photo, not a full-res upload
@@ -1039,7 +1112,7 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
         name = req.name.strip()[:120]
         if not name:
             raise HTTPException(status_code=400, detail="Name can't be empty")
-        updates.append("name = ?")
+        updates.append("name = %s")
         params.append(name)
 
     if req.avatarDataUrl is not None:
@@ -1050,8 +1123,12 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
                 raise HTTPException(status_code=400, detail="Avatar must be an image")
             if len(req.avatarDataUrl) > MAX_AVATAR_BYTES:
                 raise HTTPException(status_code=400, detail="Image too large — please use a smaller photo (under ~450KB)")
-            updates.append("avatar_data_url = ?")
+            updates.append("avatar_data_url = %s")
             params.append(req.avatarDataUrl)
+
+    if req.emailNotifications is not None:
+        updates.append("email_notifications = %s")
+        params.append(1 if req.emailNotifications else 0)
 
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -1059,11 +1136,11 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
     conn = get_db()
     try:
         params.append(current_user["id"])
-        conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+        conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = %s", params)
         conn.commit()
         row = conn.execute(
-            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member "
-            "FROM users WHERE id = ?", (current_user["id"],)
+            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member, referral_discount_pct, email_notifications "
+            "FROM users WHERE id = %s", (current_user["id"],)
         ).fetchone()
         return {"user": user_public(row)}
     finally:
@@ -1113,16 +1190,39 @@ def apply_as_investor(req: InvestorApplyRequest, current_user=Depends(get_curren
     conn = get_db()
     try:
         existing = conn.execute(
-            "SELECT status FROM investor_applications WHERE user_id = ?", (current_user["id"],)
+            "SELECT status FROM investor_applications WHERE user_id = %s", (current_user["id"],)
         ).fetchone()
         if existing:
             return {"status": existing[0]}
         conn.execute(
-            "INSERT INTO investor_applications (id, user_id, name, firm, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
+            "INSERT INTO investor_applications (id, user_id, name, firm, status, created_at) VALUES (%s, %s, %s, %s, 'pending', %s)",
             (secrets.token_hex(10), current_user["id"], req.name, req.firm, int(time.time())),
         )
         conn.commit()
         return {"status": "pending"}
+    finally:
+        conn.close()
+
+
+class NotifyMeRequest(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/investors/notify-me")
+def notify_me_when_directory_opens(req: NotifyMeRequest, request: Request):
+    # No login required — this is the low-friction "just email me" ask,
+    # distinct from apply_as_investor above. Idempotent on the UNIQUE email
+    # column: signing up twice is a friendly no-op, not an error.
+    check_rate_limit("notify-me", client_ip(request), limit=5, window_seconds=600)
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO directory_notify_signups (id, email, created_at) VALUES (%s, %s, %s) "
+            "ON CONFLICT(email) DO NOTHING",
+            (secrets.token_hex(10), req.email.lower(), int(time.time())),
+        )
+        conn.commit()
+        return {"ok": True}
     finally:
         conn.close()
 
@@ -1132,7 +1232,7 @@ def investor_application_status(current_user=Depends(get_current_user)):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT status FROM investor_applications WHERE user_id = ?", (current_user["id"],)
+            "SELECT status FROM investor_applications WHERE user_id = %s", (current_user["id"],)
         ).fetchone()
         return {"status": row[0] if row else "none"}
     finally:
@@ -1144,7 +1244,7 @@ def investor_directory(current_user=Depends(get_current_user)):
     conn = get_db()
     try:
         app_row = conn.execute(
-            "SELECT status FROM investor_applications WHERE user_id = ?", (current_user["id"],)
+            "SELECT status FROM investor_applications WHERE user_id = %s", (current_user["id"],)
         ).fetchone()
         if not app_row or app_row[0] != "approved":
             raise HTTPException(status_code=403, detail="Your investor application isn't approved yet")
@@ -1221,7 +1321,7 @@ def admin_list_investor_applications(status: Optional[str] = None, _admin=Depend
         )
         params: tuple = ()
         if status:
-            query += " WHERE ia.status = ?"
+            query += " WHERE ia.status = %s"
             params = (status,)
         query += " ORDER BY ia.created_at DESC"
         rows = conn.execute(query, params).fetchall()
@@ -1247,11 +1347,11 @@ def admin_decide_investor_application(
     new_status = "approved" if req.action == "approve" else "rejected"
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM investor_applications WHERE id = ?", (application_id,)).fetchone()
+        row = conn.execute("SELECT id FROM investor_applications WHERE id = %s", (application_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Application not found")
         conn.execute(
-            "UPDATE investor_applications SET status = ?, decided_at = ? WHERE id = ?",
+            "UPDATE investor_applications SET status = %s, decided_at = %s WHERE id = %s",
             (new_status, int(time.time()), application_id),
         )
         conn.commit()
@@ -1276,10 +1376,10 @@ def admin_set_user_plan(user_id: str, req: PlanUpdateRequest, _admin=Depends(req
         raise HTTPException(status_code=400, detail="plan must be 'free' or 'pro'")
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="User not found")
-        conn.execute("UPDATE users SET plan = ? WHERE id = ?", (req.plan, user_id))
+        conn.execute("UPDATE users SET plan = %s WHERE id = %s", (req.plan, user_id))
         conn.commit()
         return {"plan": req.plan}
     finally:
@@ -1314,7 +1414,7 @@ def list_my_projects(current_user=Depends(get_current_user)):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT data FROM projects WHERE owner_user_id = ? ORDER BY updated_at DESC",
+            "SELECT data FROM projects WHERE owner_user_id = %s ORDER BY updated_at DESC",
             (current_user["id"],),
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
@@ -1335,7 +1435,7 @@ def get_project(project_id: str, request: Request):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT data, owner_user_id FROM projects WHERE id = ?", (project_id,)
+            "SELECT data, owner_user_id FROM projects WHERE id = %s", (project_id,)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -1345,7 +1445,7 @@ def get_project(project_id: str, request: Request):
         allowed_summary = False
         if token:
             sess = conn.execute(
-                "SELECT user_id, expires_at FROM sessions WHERE token = ?", (token,)
+                "SELECT user_id, expires_at FROM sessions WHERE token = %s", (token,)
             ).fetchone()
             if sess and sess[1] >= int(time.time()):
                 uid = sess[0]
@@ -1354,7 +1454,7 @@ def get_project(project_id: str, request: Request):
                     allowed_summary = True
                 else:
                     inv = conn.execute(
-                        "SELECT status FROM investor_applications WHERE user_id = ?", (uid,)
+                        "SELECT status FROM investor_applications WHERE user_id = %s", (uid,)
                     ).fetchone()
                     allowed_summary = bool(inv and inv[0] == "approved")
         if not allowed_summary:
@@ -1376,28 +1476,29 @@ def award_referral_milestones_if_earned(conn, published_user_id: str):
     # signup itself. Each milestone can only fire once per referrer: the
     # `AND referral_milestoneN_awarded = 0` guard on the UPDATE makes the
     # check-then-award atomic against a concurrent duplicate award.
-    row = conn.execute("SELECT referred_by_user_id FROM users WHERE id = ?", (published_user_id,)).fetchone()
+    row = conn.execute("SELECT referred_by_user_id FROM users WHERE id = %s", (published_user_id,)).fetchone()
     referrer_id = row[0] if row else None
     if not referrer_id:
         return
     published_referrals = conn.execute(
         "SELECT COUNT(DISTINCT u.id) FROM users u "
         "JOIN projects p ON p.owner_user_id = u.id AND p.status = 'published' "
-        "WHERE u.referred_by_user_id = ?",
+        "WHERE u.referred_by_user_id = %s",
         (referrer_id,),
     ).fetchone()[0]
     if published_referrals >= 3:
         cur = conn.execute(
             "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining + 50, "
-            "referral_milestone3_awarded = 1 WHERE id = ? AND referral_milestone3_awarded = 0",
+            "referral_discount_pct = 5, "
+            "referral_milestone3_awarded = 1 WHERE id = %s AND referral_milestone3_awarded = 0",
             (referrer_id,),
         )
         if cur.rowcount:
-            log.info("referral milestone 3 awarded to user_id=%s (+50 messages)", referrer_id)
+            log.info("referral milestone 3 awarded to user_id=%s (+50 messages, 5%% one-time discount)", referrer_id)
     if published_referrals >= 5:
         cur = conn.execute(
             "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining + 100, "
-            "referral_milestone5_awarded = 1 WHERE id = ? AND referral_milestone5_awarded = 0",
+            "referral_milestone5_awarded = 1 WHERE id = %s AND referral_milestone5_awarded = 0",
             (referrer_id,),
         )
         if cur.rowcount:
@@ -1413,19 +1514,27 @@ def upsert_project(project_id: str, project: ProjectIn, background_tasks: Backgr
     conn = get_db()
     try:
         existing = conn.execute(
-            "SELECT owner_user_id, data FROM projects WHERE id = ?", (project_id,)
+            "SELECT owner_user_id, data FROM projects WHERE id = %s", (project_id,)
         ).fetchone()
         if existing and existing[0] and existing[0] != current_user["id"]:
             raise HTTPException(status_code=403, detail="You don't own this project")
         old_pitch = json.loads(existing[1]).get("pitch") if existing else None
         old_status = json.loads(existing[1]).get("status") if existing else None
 
+        # 2026-09-04 (Denis: "make sure u haaave to verify email") — a draft
+        # can still be saved unverified, but the moment it would go public
+        # (first transition to "published") a confirmed email is required.
+        # Never gated at signup/login itself, so an unverified user can
+        # still explore the app and finish their draft before verifying.
+        if project.status == "published" and old_status != "published" and not current_user.get("emailVerified"):
+            raise HTTPException(status_code=403, detail="Please verify your email before publishing — check your inbox or resend the link from Settings.")
+
         payload = project.model_dump()
         payload["updatedAt"] = now
         payload["ownerUserId"] = current_user["id"]
         conn.execute(
             """INSERT INTO projects (id, owner_user_id, status, published_at, updated_at, data)
-               VALUES (?, ?, ?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s, %s, %s)
                ON CONFLICT(id) DO UPDATE SET
                  status=excluded.status,
                  published_at=excluded.published_at,
@@ -1702,7 +1811,7 @@ async def rate_project(project_id: str, req: RateRequest, current_user=Depends(g
     # trigger a rating for it, same rule as PUT /api/projects/{id}.
     conn = get_db()
     try:
-        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = %s", (project_id,)).fetchone()
     finally:
         conn.close()
     if not row:
@@ -1720,7 +1829,7 @@ def get_rating(project_id: str):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT overall, scores, verdict, biggest_risk, improvements, judges, updated_at FROM project_ratings WHERE project_id = ?",
+            "SELECT overall, scores, verdict, biggest_risk, improvements, judges, updated_at FROM project_ratings WHERE project_id = %s",
             (project_id,),
         ).fetchone()
         if not row:
@@ -1738,7 +1847,7 @@ def save_rating(project_id: str, result: dict):
     try:
         conn.execute(
             """INSERT INTO project_ratings (project_id, overall, scores, verdict, biggest_risk, improvements, judges, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(project_id) DO UPDATE SET
                  overall=excluded.overall, scores=excluded.scores, verdict=excluded.verdict,
                  biggest_risk=excluded.biggest_risk, improvements=excluded.improvements,
@@ -1827,7 +1936,7 @@ def save_business_plan(project_id: str, content: dict):
     conn = get_db()
     try:
         conn.execute(
-            """INSERT INTO business_plans (project_id, content, updated_at) VALUES (?, ?, ?)
+            """INSERT INTO business_plans (project_id, content, updated_at) VALUES (%s, %s, %s)
                ON CONFLICT(project_id) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at""",
             (project_id, json.dumps(content), int(time.time())),
         )
@@ -1837,7 +1946,7 @@ def save_business_plan(project_id: str, content: dict):
 
 
 def _owned_project_or_404(conn, project_id: str, current_user: dict) -> dict:
-    row = conn.execute("SELECT data, owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    row = conn.execute("SELECT data, owner_user_id FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
     if row[1] and row[1] != current_user["id"]:
@@ -1859,7 +1968,7 @@ async def create_business_plan(project_id: str, req: RateRequest, current_user=D
     try:
         _owned_project_or_404(conn, project_id, current_user)
         rating_row = conn.execute(
-            "SELECT overall, scores, verdict, biggest_risk, improvements FROM project_ratings WHERE project_id = ?",
+            "SELECT overall, scores, verdict, biggest_risk, improvements FROM project_ratings WHERE project_id = %s",
             (project_id,),
         ).fetchone()
     finally:
@@ -1881,7 +1990,7 @@ def read_business_plan(project_id: str, current_user=Depends(get_current_user)):
     try:
         _owned_project_or_404(conn, project_id, current_user)
         row = conn.execute(
-            "SELECT content, updated_at FROM business_plans WHERE project_id = ?", (project_id,)
+            "SELECT content, updated_at FROM business_plans WHERE project_id = %s", (project_id,)
         ).fetchone()
         if not row:
             return {"plan": None}
@@ -1980,7 +2089,7 @@ def record_analytics_event(event: AnalyticsEventIn, request: Request):
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO analytics_events (name, project_id, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO analytics_events (name, project_id, created_at) VALUES (%s, %s, %s)",
             (event.name, event.projectId, int(time.time())),
         )
         conn.commit()
@@ -1999,7 +2108,7 @@ def analytics_summary(days: int = 30, current_user=Depends(get_current_user)):
         totals = {
             row[0]: row[1]
             for row in conn.execute(
-                "SELECT name, COUNT(*) FROM analytics_events WHERE created_at >= ? GROUP BY name",
+                "SELECT name, COUNT(*) FROM analytics_events WHERE created_at >= %s GROUP BY name",
                 (since,),
             ).fetchall()
         }
@@ -2009,7 +2118,7 @@ def analytics_summary(days: int = 30, current_user=Depends(get_current_user)):
             """SELECT a.project_id, a.name, COUNT(*)
                FROM analytics_events a
                JOIN projects p ON p.id = a.project_id
-               WHERE a.created_at >= ? AND p.owner_user_id = ?
+               WHERE a.created_at >= %s AND p.owner_user_id = %s
                GROUP BY a.project_id, a.name""",
             (since, current_user["id"]),
         ).fetchall()
@@ -2030,7 +2139,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
     since = int(time.time()) - days * 86400
     conn = get_db()
     try:
-        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = %s", (project_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
         if row[0] != current_user["id"]:
@@ -2039,7 +2148,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
         totals = {
             name: count
             for name, count in conn.execute(
-                "SELECT name, COUNT(*) FROM analytics_events WHERE project_id = ? AND created_at >= ? GROUP BY name",
+                "SELECT name, COUNT(*) FROM analytics_events WHERE project_id = %s AND created_at >= %s GROUP BY name",
                 (project_id, since),
             ).fetchall()
         }
@@ -2047,7 +2156,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
         # without doing its own date math.
         daily_rows = conn.execute(
             """SELECT date(created_at, 'unixepoch') AS day, name, COUNT(*)
-               FROM analytics_events WHERE project_id = ? AND created_at >= ?
+               FROM analytics_events WHERE project_id = %s AND created_at >= %s
                GROUP BY day, name ORDER BY day ASC""",
             (project_id, since),
         ).fetchall()
@@ -2056,7 +2165,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
             daily.setdefault(day, {})[name] = count
 
         rating_row = conn.execute(
-            "SELECT overall, scores, updated_at FROM project_ratings WHERE project_id = ?",
+            "SELECT overall, scores, updated_at FROM project_ratings WHERE project_id = %s",
             (project_id,),
         ).fetchone()
         rating = None

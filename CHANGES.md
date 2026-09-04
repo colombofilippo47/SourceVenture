@@ -1,5 +1,110 @@
 # CHANGES.md — SourceVenture
 
+## 2026-09-04 (round 2, same day) — Postgres migration, full deploy, closing feature list
+
+Denis: password strictness + a playful "runs away" button on a weak
+password, working investor "Notify me", email-notification opt-in +
+settings toggle, referral system verified end-to-end + a new one-time 5%
+discount, bigger logo mark, real enforced+working email verification, then
+"find a free host with no limits like Vercel and deploy everything."
+
+- **Backend moved off local SQLite onto Postgres** (a dedicated new
+  Supabase free-tier project) — this was the actual blocker on deploying
+  to Vercel at all, since a `data.db` file doesn't survive a serverless
+  filesystem. `sqlite3` → `psycopg`, all 59 `?` placeholders → `%s`,
+  `ADD COLUMN IF NOT EXISTS` (Postgres-native, dropped the old
+  try/except-`OperationalError` dance), `AUTOINCREMENT` → `SERIAL`. Real
+  bug caught and fixed by live-testing rather than trusting a clean
+  migration: every millisecond timestamp column (`projects.updated_at`/
+  `published_at`, plus every other `*_at` column for consistency) was
+  still `INTEGER` — Postgres's `INTEGER` is 32-bit, and a millisecond
+  epoch value is ~1.8 trillion, so every project save 500'd with
+  `NumericValueOutOfRange` until these became `BIGINT`.
+  - First Supabase project created (`aufcpeikgzixydwudtgi`) hit a
+    persistent password-auth failure against its own pooler that never
+    resolved (not a propagation delay — confirmed via a 4-minute retry
+    loop); Supabase's Management API has no password-reset endpoint, so
+    rather than escalate to Denis mid-task, deleted it and created a
+    second, clean project (`dmrjkpokvclxkvyteavj`) with a fresh
+    alphanumeric-only password — connected on the first real try.
+  - Old `backend/requirements.txt` gained `psycopg[binary]`.
+- **Deployed**: backend as a Vercel Python (FastAPI/ASGI) serverless
+  function — `backend/api/index.py` + `backend/vercel.json`. First
+  deploy attempt used the modern `rewrites` config and silently 404'd on
+  every route (confirmed via `vercel logs`: the ASGI app was receiving
+  `/api/index` as the request path on every call, not the real path) —
+  switched to the legacy `builds`+`routes` vercel.json format, which
+  correctly forwards the full original path through to FastAPI's own
+  router. Live-verified signup → /me → notify-me end to end against the
+  real deployed URL before calling it done. New Vercel project `backend`
+  (`apexmedialx-8775s-projects`), SSO deployment protection disabled (same
+  fix as the frontend needed), env vars set for prod (`DATABASE_URL`,
+  `GEMINI_API_KEY`/`MODEL`, `RESEND_API_KEY`/`FROM`, `ADMIN_EMAILS`
+  cleaned to just Denis's real email, `CORS_ORIGINS`, `PUBLIC_APP_URL`,
+  `PUBLIC_API_URL`, `COOKIE_SECURE=true`). Domain `api.sourceventure.dev`
+  attached — needs one more DNS record from Denis, see below.
+  - Frontend redeployed with a hostname-gated API base
+    (`window.SOURCEVENTURE_API_BASE`, set only off `localhost`, so the one
+    static `index.html` still works unchanged for local dev) pointing at
+    `https://api.sourceventure.dev`, and the CSP's stale
+    `sourceventure.onrender.com` reference swapped for the real API origin.
+  - GitHub/Google OAuth and Cloudflare Turnstile envs are still unset on
+    Vercel (same "quiet until configured" pattern as local — those
+    features just don't activate yet, nothing broke).
+- **Real Resend email confirmed working** — reused the same working key
+  Max OS already has (a live test send to Denis's own email round-tripped
+  a real message ID). Caveat flagged inline in `.env`/`.env.example`: the
+  shared `onboarding@resend.dev` sandbox address only delivers to the
+  Resend account owner's own verified email — real founder signups with
+  other addresses won't get mail until Denis verifies `sourceventure.dev`
+  as a sending domain in his own Resend dashboard (a few DNS records).
+- **Email verification now actually enforced**: unverified accounts can
+  still sign in and draft, but `PUT /api/projects/{id}` 403s the specific
+  moment a project would first go from draft to published, with a message
+  pointing at Settings → resend. Never gated at signup/login.
+- **Password policy tightened**: was letter+digit/8 chars, now
+  upper+lower+digit+symbol/10 chars, both backend (`validate_password_strength`)
+  and the client-side pre-check.
+- **"Runs away" button**: a genuinely new mouse-repel effect on the
+  signup submit button (`initDodgingSubmitButton`/`onAuthPasswordInput`),
+  active only while the typed password is below the real strength bar —
+  dodges within its own field row (clamped, can't fly off-layout), parks
+  back the instant the password clears the bar. Deliberately cosmetic
+  only — the real gate stays the existing weak-password check on submit,
+  a dodge never blocks a click that lands.
+- **Investor "Notify me" now really works**: was silently redirecting a
+  logged-out visitor to sign-in with zero explanation before opening the
+  full name+firm investor-application form. Split into two real, distinct
+  flows: `openNotifyMeModal()` (new, no login required, backend
+  `POST /api/investors/notify-me` + `directory_notify_signups` table,
+  idempotent on email) for "just tell me when it opens", vs.
+  `openInvestorApplyModal()` (unchanged, login required) for an actual
+  investor application once the directory is open.
+- **Email-notification preference**: `email_notifications` column
+  (defaults on), a real checkbox at signup, a toggle in
+  Settings → Account, `PUT /api/auth/profile` accepts it.
+- **Referral system verified end-to-end, live** (not just read from code):
+  signed up 3 fresh accounts with a real referral code, verified each,
+  published a real project on each — confirmed the referrer's
+  `referralBonusRemaining` hit 50 and a new one-time 5% `referralDiscountPct`
+  landed on the exact 3rd milestone, matching the existing
+  `referral_milestone3_awarded` one-shot guard so it can never double-award.
+  Reflected in the Pro upgrade modal (stacks additively with the existing
+  founding-member 50%) and the Settings → Plan referral card.
+- **Logo mark enlarged** (19px → 30px height) — only the icon, the
+  `SourceVenture` wordmark's own size is untouched.
+- `.env`'s leftover `admin-test@example.com` removed from `ADMIN_EMAILS`,
+  same cleanup applied to the deployed env var.
+
+**Still open** (flagged, not done): GitHub/Google OAuth apps, Cloudflare
+Turnstile site, and a verified Resend sending domain all still need Denis
+to create them in their respective dashboards (nothing here can create
+accounts on his behalf) — every one degrades gracefully without them.
+"The Council" reference-repo question from earlier is still unresolved
+(never got a specific repo link). Notes-with-AI + the
+`claude-api-bridge` Max OS items are still deliberately deferred behind
+this + Festival Cantábile, per Denis's own prioritization.
+
 ## 2026-09-04 — Section 1/First Drop reconciled, deployed to Vercel
 
 Merged colombofilippo's `integrate/denis-plus-analytics` branch (his own

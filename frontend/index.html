@@ -10,25 +10,49 @@
      to an attacker-controlled host. connect-src covers the backend
      (localhost in dev; add your deployed API origin here) and GitHub's
      public API; everything else is denied by default-src 'self'. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com https://challenges.cloudflare.com; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self' http://localhost:8000 https://api.github.com https://api.sourceventure.dev https://challenges.cloudflare.com; base-uri 'self'; form-action 'self'" />
 <!-- frame-ancestors is deliberately absent: it's ignored in a <meta> CSP and
      only works as a real HTTP header. Set it (or X-Frame-Options) on whatever
      serves this file in production — the API already sends X-Frame-Options. -->
+<!-- 2026-09-04: zero-build static file, so there's no env-var injection at
+     build time — the API base is set here based on hostname instead of
+     being hardcoded, so the exact same file works unchanged for both local
+     dev (falls through to the http://localhost:8000 default in the app
+     script below) and the real deployment. -->
+<script>
+  if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    window.SOURCEVENTURE_API_BASE = "https://api.sourceventure.dev";
+  }
+</script>
 <title>SourceVenture — Venture Engineering</title>
 <meta name="description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it — before optionally sharing an approved summary with investors." />
 <link rel="canonical" href="https://sourceventure.dev/" />
+<!-- 2026-09-05 (Denis: "add the logo and stuff to the tab thing") — the
+     browser-tab icon, plus a proper iOS home-screen icon. favicon.png is
+     the dark-ink mark on transparent (reads on the light tab-bar chrome
+     most browsers default to); apple-touch-icon.png has a solid dark fill
+     since iOS renders transparency in touch icons as flat black. Both
+     generated from the same two logo files everywhere else already uses. -->
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
 <!-- Open Graph / Twitter Card — used by link-preview crawlers and by some
-     AI assistants that fetch a page's social metadata to summarize it. -->
+     AI assistants that fetch a page's social metadata to summarize it.
+     og-card.png (2026-09-05) is a real 1200x630 social card — swapped in
+     for the bare transparent logo.png, which is a tall 588x784 portrait
+     and rendered oddly/cropped on most link-preview surfaces (they expect
+     a landscape image close to 1.91:1). -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="SourceVenture" />
 <meta property="og:title" content="SourceVenture — Venture Engineering" />
 <meta property="og:description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it." />
 <meta property="og:url" content="https://sourceventure.dev/" />
-<meta property="og:image" content="https://sourceventure.dev/assets/logo.png" />
-<meta name="twitter:card" content="summary" />
+<meta property="og:image" content="https://sourceventure.dev/assets/og-card.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="SourceVenture — Venture Engineering" />
 <meta name="twitter:description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it." />
-<meta name="twitter:image" content="https://sourceventure.dev/assets/logo.png" />
+<meta name="twitter:image" content="https://sourceventure.dev/assets/og-card.png" />
 <!-- JSON-LD structured data — helps both classic rich-result search and
      AI answer engines correctly identify what this product is, rather
      than guessing from unstructured page text. -->
@@ -281,7 +305,33 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .ln-links a{font-size:13.5px;color:var(--on-surface-variant);}
 .ln-links a:hover{color:var(--on-surface);}
 @media(max-width:860px){.ln-links{display:none;}}
+.ln-actions{display:flex;gap:10px;align-items:center;}
+/* 2026-09-05 (Denis, mobile bug report): "Get Started"/"Sign In" didn't
+   fit in the header on narrow phones — #landing-nav's own left+right
+   padding (40px) plus the brand mark+wordmark plus both buttons added up
+   to more width than a ~360-390px phone viewport has. Reclaim space by
+   dropping the wordmark (the logo mark alone still reads as the brand —
+   same "logo bigger, not the text" mark from the 2026-09-04 round) and
+   tightening the button cluster's own gap/padding, mobile only — desktop
+   is untouched. */
+@media(max-width:480px){
+  #landing-nav .wrap{padding:0 14px;}
+  #landing-nav .sv-wordmark{display:none;}
+  .ln-actions{gap:6px;}
+  .ln-actions .btn-sm{padding:7px 10px;font-size:11.5px;}
+  /* "make the scroll more stable and steady" — a sticky element recomputing
+     a 20px backdrop-filter blur on every scroll-compositing frame is a
+     well-known mobile jank source (heavier than the same blur on a
+     non-sticky element). Same frosted-glass look at a fraction of the
+     cost with a smaller radius; desktop keeps the full blur(20px). */
+  #topbar,#landing-nav{backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);}
+}
 .hero{padding:110px 0 120px;}
+/* Denis: "hero bottom margin for mobile a tad shorter" — matches the
+   existing .hero h1 mobile breakpoint below rather than introducing a new
+   one. Top padding (clears the sticky nav) is left alone; only the bottom
+   gap before the next section is trimmed. */
+@media(max-width:520px){.hero{padding-bottom:64px;}}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
 @media(max-width:940px){.hero-grid{grid-template-columns:1fr;}}
 .hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;}
@@ -484,12 +534,39 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 :root[data-theme="light"] .auth-field input:focus{background:rgba(19,21,43,.05);}
 .auth-submit-row{position:relative;margin-top:18px;}
 .auth-submit-row .auth-field{margin-bottom:0;}
-.auth-submit-row .auth-field input{padding-right:54px;}
+/* 2026-09-05 (Denis: "view password eye is overlapping arrow") — the
+   arrow submit button and the show/hide-password toggle now both live
+   inside the same input, so the input needs room for both (was padded
+   for the arrow alone). pw-toggle sits just to the left of the arrow,
+   not underneath it. */
+.auth-submit-row .auth-field input{padding-right:88px;}
 .auth-go{position:absolute;right:5px;top:5px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.10);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;transition:background-color .2s var(--ease-out-expo);}
 .auth-go:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
 .auth-go:hover{background:var(--accent-green);color:#04150e;}
 .auth-go[disabled]{opacity:.5;cursor:not-allowed;}
 :root[data-theme="light"] .auth-go{background:rgba(19,21,43,.08);color:#13152b;}
+.auth-go.dodging{transition:transform .12s ease-out,background-color .2s var(--ease-out-expo);background:rgba(255,138,138,.16);}
+.auth-go.dodging:hover{background:rgba(255,138,138,.28);color:#fff;}
+/* Custom show/hide-password toggle — also suppresses the browser's own
+   native reveal icon (Edge's ::-ms-reveal collided with our arrow button
+   in exactly the spot Denis reported) so there's only ever one eye icon,
+   in a position we control, across every browser. */
+input[type="password"]::-ms-reveal,input[type="password"]::-ms-clear{display:none;}
+input[type="password"]::-webkit-credentials-auto-fill-button{display:none !important;visibility:hidden;pointer-events:none;position:absolute;right:0;}
+.auth-pw-field{position:relative;}
+.auth-pw-field input{padding-right:44px;}
+.pw-toggle{position:absolute;top:5px;width:32px;height:32px;border:none;background:transparent;color:rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:50%;transition:color .2s ease,background-color .2s ease;}
+.pw-toggle .material-symbols-outlined{font-size:19px;}
+.pw-toggle:hover{color:#fff;background:rgba(255,255,255,.08);}
+.pw-toggle:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
+:root[data-theme="light"] .pw-toggle{color:rgba(19,21,43,.5);}
+:root[data-theme="light"] .pw-toggle:hover{color:#13152b;background:rgba(19,21,43,.06);}
+.auth-pw-field .pw-toggle{right:8px;}
+.auth-submit-row .pw-toggle{right:46px;}
+.pw-hint-bad{color:#ff8a8a;}
+.auth-checkbox-row{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:rgba(255,255,255,.6);margin-top:14px;cursor:pointer;line-height:1.4;}
+.auth-checkbox-row input{margin-top:2px;flex:none;}
+:root[data-theme="light"] .auth-checkbox-row{color:rgba(19,21,43,.6);}
 .auth-error{color:#ff8a8a;font-size:12.5px;margin:14px 0 0;min-height:1px;}
 .auth-google-btn{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;}
 .auth-google-btn svg{flex:none;}
@@ -524,7 +601,12 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .toast.err{border-color:rgba(255,107,107,0.35);color:var(--error);}
 .skel{background:linear-gradient(90deg,var(--surface-low) 25%,var(--surface-high) 37%,var(--surface-low) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px;}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
-.reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
+/* will-change hints the compositor to promote these onto their own GPU
+   layer before the scroll-triggered transition starts, so the fade/rise/
+   blur doesn't compete with the browser's own scroll compositing the
+   moment it fires — a handful of landing-page elements, not costly to
+   leave hinted permanently. */
+.reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);will-change:opacity,transform,filter;}
 .reveal.in{opacity:1;filter:blur(0);transform:translateY(0) scale(1);}
 .magnetic{transition:transform .25s var(--ease-out-expo);}
 @media(prefers-reduced-motion:reduce){.reveal{opacity:1;filter:none;transform:none;transition:none;}}
@@ -752,7 +834,11 @@ function logoMarkHtml(size){
          '<img class="sv-mark sv-mark-light" src="assets/logo-light.png" height="' + s + '" alt="" />';
 }
 function brandHtml(href){
-  var inner = '<span class="sv-brand">' + logoMarkHtml(19) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  // 2026-09-04 (Denis: "put logo bigger, not the text just the logo") —
+  // was 19px, matched to the wordmark's line-height; bumped to 30px. Only
+  // the mark's own size argument changes here — sv-wordmark's font-size is
+  // untouched, and .sv-brand's flex align-items:center keeps them lined up.
+  var inner = '<span class="sv-brand">' + logoMarkHtml(30) + '<span class="sv-wordmark">SourceVenture</span></span>';
   return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
 }
 
@@ -824,12 +910,34 @@ var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.11, revealSpeed: 0.03, color:
 function startDotCanvas(canvas, opts){
   opts = Object.assign({}, DOT_PRESET, opts || {});
   var cell = opts.cell, dot = opts.dot, maxAlpha = opts.maxAlpha, color = opts.color, revealSpeed = opts.revealSpeed;
+  // 2026-09-05 (Denis: "make the scroll more stable and steady" on mobile)
+  // — this canvas is #bg-fx, position:fixed behind every page, redrawing
+  // every animation frame forever regardless of scroll state. On a phone
+  // GPU that's real competing work against the browser's own scroll
+  // compositing every frame you're actively dragging the page. Cut the
+  // per-frame cost specifically on narrow viewports: fewer, larger cells
+  // (drawn area is the same, just far fewer roundRect calls) and a lower
+  // device-pixel-ratio cap (fewer physical pixels to rasterize). Desktop
+  // is untouched — this only kicks in under the same ~480px phone
+  // breakpoint used for the header/hero mobile fixes.
+  var isMobileViewport = window.innerWidth <= 480;
+  if(isMobileViewport) cell = cell * 1.6;
   var ctx = canvas.getContext("2d");
-  var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  var dpr = Math.min(window.devicePixelRatio || 1, isMobileViewport ? 1 : 1.5);
   var start = performance.now();
   var raf, w, h;
   var mouseX = -9999, mouseY = -9999; // canvas-local CSS px; off-screen until first move
   var hoverRadius = 130, hoverBoost = 2.2;
+  // Mobile (Denis: "instead of with mouse, for mobile, make it on tap so a
+  // kinda wave forms of pixels") — there's no continuous pointer position
+  // to follow on a touchscreen, so a tap instead drops a ripple: an
+  // expanding ring that boosts whatever dots it currently passes through,
+  // fading out as it travels outward. Bound on window, not the canvas
+  // itself, same reasoning as the mousemove listener below — #bg-fx (the
+  // sitewide layer this also runs on) is pointer-events:none, so listening
+  // on the canvas element directly would never fire.
+  var ripples = []; // {x, y, start}
+  var RIPPLE_LIFE = 1.1, RIPPLE_SPEED = 420, RIPPLE_WIDTH = 50, RIPPLE_MAX = 4;
   function resize(){
     w = canvas.clientWidth; h = canvas.clientHeight;
     canvas.width = w * dpr; canvas.height = h * dpr;
@@ -840,13 +948,28 @@ function startDotCanvas(canvas, opts){
     mouseX = e.clientX - r.left; mouseY = e.clientY - r.top;
   }
   function onLeave(){ mouseX = -9999; mouseY = -9999; }
+  function onTouchStart(e){
+    var r = canvas.getBoundingClientRect();
+    var now = performance.now();
+    for(var i = 0; i < e.changedTouches.length; i++){
+      var touch = e.changedTouches[i];
+      ripples.push({ x: touch.clientX - r.left, y: touch.clientY - r.top, start: now });
+    }
+    if(ripples.length > RIPPLE_MAX) ripples.splice(0, ripples.length - RIPPLE_MAX);
+  }
+  function onTouchEnd(){ mouseX = -9999; mouseY = -9999; } // avoid a lingering static glow from touch's synthetic mousemove
   resize();
   window.addEventListener("resize", resize);
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseleave", onLeave);
+  window.addEventListener("touchstart", onTouchStart, { passive: true });
+  window.addEventListener("touchend", onTouchEnd, { passive: true });
+  window.addEventListener("touchcancel", onTouchEnd, { passive: true });
   function draw(now){
     var t = (now - start) / 1000;
     ctx.clearRect(0, 0, w, h);
+    // Prune expired ripples once per frame (not once per dot below).
+    while(ripples.length && (now - ripples[0].start) / 1000 > RIPPLE_LIFE) ripples.shift();
     // Light mode needs noticeably more alpha than dark to read at the same
     // perceived strength — pale-on-white is inherently harder to see than
     // pale-on-black. Checked live (not cached) so it responds instantly to
@@ -877,6 +1000,19 @@ function startDotCanvas(canvas, opts){
           alpha = Math.min(1, alpha + proximity * hoverBoost * themeAlpha);
           r = dot + proximity * 2.2;
         }
+        for(var ri = 0; ri < ripples.length; ri++){
+          var rp = ripples[ri];
+          var rippleAge = (now - rp.start) / 1000;
+          var waveRadius = rippleAge * RIPPLE_SPEED;
+          var ringDist = Math.abs(Math.hypot(px - rp.x, py - rp.y) - waveRadius);
+          if(ringDist < RIPPLE_WIDTH){
+            var ringProximity = 1 - ringDist / RIPPLE_WIDTH;
+            var fade = 1 - rippleAge / RIPPLE_LIFE;
+            var boost = ringProximity * fade;
+            alpha = Math.min(1, alpha + boost * hoverBoost * themeAlpha);
+            r = Math.max(r, dot + boost * 2.6);
+          }
+        }
         ctx.fillStyle = "rgba(" + color + "," + alpha.toFixed(3) + ")";
         // Slightly rounded squares, not circles — reads as "pixels", not dots.
         var s = r * 1.7;
@@ -897,6 +1033,9 @@ function startDotCanvas(canvas, opts){
     window.removeEventListener("resize", resize);
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseleave", onLeave);
+    window.removeEventListener("touchstart", onTouchStart);
+    window.removeEventListener("touchend", onTouchEnd);
+    window.removeEventListener("touchcancel", onTouchEnd);
   };
 }
 // Sitewide layer: started once at boot (see bottom of file), never stopped —
@@ -970,10 +1109,22 @@ function renderAuthPage(root, mode){
       '<form onsubmit="event.preventDefault();submitAuthForm(\'' + mode + '\');">' +
         (isSignup ? '<div class="auth-field"><input type="text" id="auth-name" placeholder="Your name" autocomplete="name" /></div>' : "") +
         '<div class="auth-field"><input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" /></div>' +
-        '<div class="auth-field auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="' + (isSignup ? "new-password" : "current-password") + '" />' +
-          '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="' + (isSignup ? "Create account" : "Sign in") + '"><span class="material-symbols-outlined">arrow_forward</span></button>' +
-        '</div>' +
-        (isSignup ? '<p class="muted" style="font-size:11px;margin-top:6px;">At least 8 characters, with a letter and a number.</p>' : "") +
+        (isSignup ?
+          '<div class="auth-field auth-pw-field"><input type="password" id="auth-password" placeholder="Password" autocomplete="new-password" oninput="onAuthPasswordInput()" />' +
+            '<button type="button" class="pw-toggle" tabindex="-1" aria-label="Show password" onclick="togglePwVisibility(\'auth-password\',this)"><span class="material-symbols-outlined">visibility</span></button>' +
+          '</div>' +
+          '<p class="muted" style="font-size:11px;margin:-4px 0 12px;" id="pw-hint">At least 10 characters, with upper &amp; lowercase, a number and a symbol.</p>' +
+          '<div class="auth-field auth-submit-row" id="auth-submit-row"><input type="password" id="auth-password-confirm" placeholder="Confirm password" autocomplete="new-password" />' +
+            '<button type="button" class="pw-toggle" tabindex="-1" aria-label="Show password" onclick="togglePwVisibility(\'auth-password-confirm\',this)"><span class="material-symbols-outlined">visibility</span></button>' +
+            '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="Create account"><span class="material-symbols-outlined">arrow_forward</span></button>' +
+          '</div>'
+        :
+          '<div class="auth-field auth-submit-row" id="auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" />' +
+            '<button type="button" class="pw-toggle" tabindex="-1" aria-label="Show password" onclick="togglePwVisibility(\'auth-password\',this)"><span class="material-symbols-outlined">visibility</span></button>' +
+            '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="Sign in"><span class="material-symbols-outlined">arrow_forward</span></button>' +
+          '</div>'
+        ) +
+        (isSignup ? '<label class="auth-checkbox-row"><input type="checkbox" id="auth-email-notifs" checked /> Email me updates about my account (you can change this later in Settings)</label>' : "") +
         (isSignup && TURNSTILE_SITE_KEY ? '<div id="turnstile-widget" style="margin-top:12px;"></div>' : "") +
       '</form>' +
       '<p class="auth-error" id="auth-error"></p>' +
@@ -985,6 +1136,72 @@ function renderAuthPage(root, mode){
   setTimeout(function(){ var f = $("auth-name") || $("auth-email"); if(f) f.focus(); }, 350);
   window.__turnstileToken = null;
   if(isSignup && TURNSTILE_SITE_KEY) renderTurnstileWidget();
+  if(isSignup) initDodgingSubmitButton();
+}
+
+// "Anti-magnetic" submit button (Denis: "when u dont put strong enough
+// pass, the button runs away from you... oposite of magnetic button") —
+// only active on signup, only while the password is below the real
+// strength bar (see passwordIsStrong, mirrors the backend's
+// validate_password_strength exactly). Once strong, or once the mouse
+// isn't near it, the button eases back to its resting spot. This is a
+// playful nudge only — the real gate is still the check in
+// submitAuthForm/the backend; a dodge never blocks a click that lands.
+function passwordIsStrong(pw){
+  return !!pw && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+}
+var DODGE = { active:false, row:null, btn:null, onMove:null };
+function initDodgingSubmitButton(){
+  teardownDodgingSubmitButton();
+  var row = $("auth-submit-row"), btn = $("auth-submit");
+  if(!row || !btn) return;
+  DODGE.row = row; DODGE.btn = btn;
+  DODGE.onMove = function(ev){
+    if(!DODGE.active){ btn.style.transform = ""; return; }
+    var r = btn.getBoundingClientRect();
+    var bx = r.left + r.width/2, by = r.top + r.height/2;
+    var dx = bx - ev.clientX, dy = by - ev.clientY;
+    var dist = Math.hypot(dx, dy);
+    var radius = 90; // how close the cursor needs to get before it dodges
+    if(dist < radius){
+      var strength = (radius - dist) / radius; // 0..1, stronger pull up close
+      var angle = Math.atan2(dy, dx);
+      var kick = 46 * strength;
+      var rowRect = row.getBoundingClientRect();
+      var maxX = Math.max(0, rowRect.width - r.width - 4);
+      var moveX = Math.cos(angle) * kick;
+      var moveY = Math.sin(angle) * kick;
+      // Clamp so it can't fly out of its own field row.
+      moveX = Math.max(-maxX * 0.6, Math.min(maxX * 0.6, moveX));
+      moveY = Math.max(-16, Math.min(16, moveY));
+      btn.style.transform = "translate(" + moveX.toFixed(1) + "px," + moveY.toFixed(1) + "px)";
+    } else {
+      btn.style.transform = "";
+    }
+  };
+  document.addEventListener("mousemove", DODGE.onMove);
+  onAuthPasswordInput();
+}
+function teardownDodgingSubmitButton(){
+  if(DODGE.onMove) document.removeEventListener("mousemove", DODGE.onMove);
+  DODGE.active = false; DODGE.row = null; DODGE.btn = null; DODGE.onMove = null;
+}
+function togglePwVisibility(fieldId, btn){
+  var el = $(fieldId);
+  if(!el) return;
+  var showing = el.type === "text";
+  el.type = showing ? "password" : "text";
+  btn.querySelector(".material-symbols-outlined").textContent = showing ? "visibility" : "visibility_off";
+  btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+}
+function onAuthPasswordInput(){
+  var pwEl = $("auth-password"), btn = $("auth-submit"), hint = $("pw-hint");
+  if(!pwEl || !btn) return;
+  var strong = passwordIsStrong(pwEl.value);
+  DODGE.active = pwEl.value.length > 0 && !strong;
+  btn.classList.toggle("dodging", DODGE.active);
+  if(!DODGE.active) btn.style.transform = "";
+  if(hint) hint.classList.toggle("pw-hint-bad", pwEl.value.length > 0 && !strong);
 }
 // Explicit render (not implicit/auto) — this app injects the form via
 // innerHTML, which Turnstile's own auto-scan only catches on the initial
@@ -1038,7 +1255,8 @@ async function submitAuthForm(mode){
   var err = $("auth-error");
   err.textContent = "";
   if((isSignup && !name) || !email || !password){ err.textContent = "Fill in every field."; return; }
-  if(isSignup && (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))){ err.textContent = "Password needs at least 8 characters, with a letter and a number."; return; }
+  if(isSignup && !passwordIsStrong(password)){ err.textContent = "Password needs 10+ characters with upper & lowercase, a number and a symbol."; return; }
+  if(isSignup && password !== $("auth-password-confirm").value){ err.textContent = "Passwords don't match."; return; }
   if(isSignup && TURNSTILE_SITE_KEY && !window.__turnstileToken){ err.textContent = "Please complete the verification check."; return; }
   var btn = $("auth-submit"); btn.disabled = true;
   try{
@@ -1048,12 +1266,13 @@ async function submitAuthForm(mode){
       var qIdx = window.location.hash.indexOf("?");
       if(qIdx !== -1) refCode = new URLSearchParams(window.location.hash.slice(qIdx+1)).get("ref");
     }
-    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined, turnstileToken: window.__turnstileToken || undefined } : { email:email, password:password };
+    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined, turnstileToken: window.__turnstileToken || undefined, emailNotifications: !!($("auth-email-notifs") && $("auth-email-notifs").checked) } : { email:email, password:password };
     var res = await fetch(url, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || (isSignup ? "Could not create account" : "Invalid email or password"));
     setAuth(data.user);
     if(isSignup){
+      teardownDodgingSubmitButton();
       track("signup_completed");
       renderAuthCheckEmail(data.user.email);
     } else {
@@ -1366,6 +1585,24 @@ async function router(){
     return;
   }
 
+  // 2026-09-05 (Denis: "make sure u cant continue to dashboard unlesss
+  // email confirmed") — was previously allowed on purpose (signup's own
+  // docstring: "real email confirmation isn't required to start using the
+  // app"), only the actual publish action was gated. Denis has now
+  // explicitly asked for the stricter version, so the whole app shell is
+  // blocked here instead — same chokepoint as the signed-out block above,
+  // just one check further in. Resend + log out stay reachable so an
+  // unverified user isn't genuinely stuck.
+  if(!STATE.auth.user.emailVerified){
+    root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
+      '<div class="canvas" style="padding-top:100px;text-align:center;">' +
+        '<h1 class="page-title">Verify your email to continue</h1>' +
+        '<p class="page-sub" style="margin:0 auto 24px;">We sent a link to <strong>' + escapeHtml(STATE.auth.user.email) + '</strong>. Click it, then come back here.</p>' +
+        '<div style="display:flex;gap:10px;justify-content:center;"><button class="btn btn-ghost" id="verify-gate-resend" onclick="resendVerificationEmail(this)">Resend email</button><button class="btn btn-primary" onclick="doLogout()">Log out</button></div>' +
+      '</div>';
+    return;
+  }
+
   root.innerHTML = appShellHtml(matched.name);
   var main = $("main");
   main.innerHTML = '<div class="skel" style="height:300px;"></div>';
@@ -1446,8 +1683,24 @@ async function renderLanding(root){
   root.innerHTML =
   '<nav id="landing-nav"><div class="wrap">' +
     brandHtml(null) +
-    '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
-    '<div style="display:flex;gap:10px;align-items:center;">' +
+    // 2026-09-05 (Denis: "header shortcuts... click one it refreshes page
+    // and only second click goes to section") — these were real <a
+    // href="#id"> anchors, which collide with the app's own hash router:
+    // the URL change fires the router's hashchange listener first, which
+    // finds no matching ROUTE, falls back to re-rendering the whole
+    // landing page from scratch (wiping the in-progress native anchor
+    // scroll and resetting scroll to top), and only the second click —
+    // hash unchanged, so no re-render — lets the browser's native anchor
+    // scroll actually happen. scrollIntoView() on click sidesteps the
+    // router entirely, matching the pattern the hero's own "See how it
+    // works" button already used.
+    '<div class="ln-links">' +
+      '<a href="#how" onclick="event.preventDefault();document.getElementById(\'how\').scrollIntoView({behavior:\'smooth\'});">Product</a>' +
+      '<a href="#how" onclick="event.preventDefault();document.getElementById(\'how\').scrollIntoView({behavior:\'smooth\'});">Features</a>' +
+      '<a href="#investors-sec" onclick="event.preventDefault();document.getElementById(\'investors-sec\').scrollIntoView({behavior:\'smooth\'});">Solutions</a>' +
+      '<a href="#pricing-sec" onclick="event.preventDefault();document.getElementById(\'pricing-sec\').scrollIntoView({behavior:\'smooth\'});">Pricing</a>' +
+    '</div>' +
+    '<div class="ln-actions">' +
       themeToggleHtml() +
       (isLoggedIn() ?
         '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
@@ -1467,7 +1720,7 @@ async function renderLanding(root){
       '</div>' +
       '<div class="mono muted" style="font-size:11.5px;">' + published.length + ' projects synced · coach powered by a private Python backend</div>' +
     '</div>' +
-    '<div class="code-panel" id="hero-code-panel">' + heroPanelInner(0) + '</div>' +
+    '<div class="code-panel reveal" style="transition-delay:.2s;" id="hero-code-panel">' + heroPanelInner(0) + '</div>' +
   '</div></header>' +
 
   '<section class="landing-sec" id="how"><div class="wrap">' +
@@ -1480,13 +1733,13 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="investors-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Investor directory</div><h2>Opens at real scale, not before.</h2><p>' + published.length + ' / ' + DIRECTORY_THRESHOLD + ' projects published right now. An empty directory hurts trust more than it helps anyone.</p></div>' +
-    '<button class="btn btn-ghost" onclick="nav(\'#/investors\')">View investor portal</button>' +
+    '<div class="section-head reveal"><div class="eyebrow">Investor directory</div><h2>Opens at real scale, not before.</h2><p>' + published.length + ' / ' + DIRECTORY_THRESHOLD + ' projects published right now. An empty directory hurts trust more than it helps anyone.</p></div>' +
+    '<button class="btn btn-ghost reveal" style="transition-delay:.1s;" onclick="nav(\'#/investors\')">View investor portal</button>' +
   '</div></section>' +
 
   '<section class="landing-sec" id="pricing-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan. <strong style="color:var(--primary);">The first ' + USER_THRESHOLD + ' founders get 50% off Pro</strong>, locked in until Phase 2 — see the investor cohort page for the live count.</p></div>' +
-    '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
+    '<div class="section-head reveal"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan. <strong style="color:var(--primary);">The first ' + USER_THRESHOLD + ' founders get 50% off Pro</strong>, locked in until Phase 2 — see the investor cohort page for the live count.</p></div>' +
+    '<button class="btn btn-ghost reveal" style="transition-delay:.1s;" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
   '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span>' +
@@ -2289,7 +2542,7 @@ async function renderInvestors(main){
         '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application approved — full access below.</div>' :
        invStatus === "pending" ?
         '<div class="mono" style="font-size:11.5px;color:var(--on-surface-variant);">Application pending review — a real queue now, no auto-approval.</div>' :
-        '<button class="btn btn-primary" onclick="openInvestorApplyModal()"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>' + (open ? "Apply for access" : "Notify me when access opens") + '</button>') +
+        '<button class="btn btn-primary" onclick="' + (open ? "openInvestorApplyModal()" : "openNotifyMeModal()") + '"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>' + (open ? "Apply for access" : "Notify me when access opens") + '</button>') +
     '</div>' +
 
     '<div class="card stack-lg" style="padding:24px;">' +
@@ -2397,6 +2650,32 @@ function openDirSummary(id){
   });
 }
 
+function openNotifyMeModal(){
+  // No account required — this is the lighter-weight "just email me" ask
+  // (Denis: "make it the notificate me button works"). Separate from
+  // openInvestorApplyModal below, which is the real full application and
+  // does require an account.
+  openModal('<h3>Get notified when the directory opens</h3><p class="modal-sub">We\'ll email you once the cohort threshold is reached — no account needed.</p>' +
+    '<div class="form-error" id="nm-error"></div>' +
+    '<div class="field"><label>Email</label><input type="email" id="nm-email" placeholder="you@example.com" /></div>' +
+    '<div class="modal-actions"><button class="btn btn-primary btn-block" id="nm-submit" onclick="submitNotifyMe()">Notify me</button></div>');
+}
+async function submitNotifyMe(){
+  var email = $("nm-email").value.trim();
+  var err = $("nm-error");
+  if(!email || email.indexOf("@") === -1){ err.textContent = "Enter a valid email."; err.classList.add("show"); return; }
+  var btn = $("nm-submit"); btn.disabled = true; btn.textContent = "Saving…";
+  try{
+    var res = await fetch(API_BASE + "/api/investors/notify-me", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: email }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error((data.detail && (typeof data.detail === "string" ? data.detail : "Invalid email")) || "Could not save");
+    closeModal();
+    showToast("You're on the list — we'll email you when it opens.");
+  }catch(e){
+    btn.disabled = false; btn.textContent = "Notify me";
+    err.textContent = e.message; err.classList.add("show");
+  }
+}
 function openInvestorApplyModal(){
   if(!isLoggedIn()){ nav("#/signin"); return; }
   openModal('<h3>Apply for investor access</h3><p class="modal-sub">Approval is required even after the cohort threshold is met — this is a real, manually-reviewed queue, not an instant unlock.</p>' +
@@ -2590,9 +2869,10 @@ function renderPlanTab(el){
     '</div>' +
     '<div class="card" style="padding:24px;max-width:520px;">' +
       '<h3 style="font-size:16px;margin-bottom:6px;">Referrals</h3>' +
-      '<p class="muted" style="font-size:13px;margin-bottom:14px;">Invite founders. When 3 of them publish a real project you get +50 bonus coach messages; at 5, another +100. Only real, published projects count — not signups.</p>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:14px;">Invite founders. When 3 of them publish a real project you get +50 bonus coach messages and a one-time 5% off Pro; at 5, another +100. Only real, published projects count — not signups.</p>' +
       '<div class="field"><label>Your referral link</label><div style="display:flex;gap:8px;"><input type="text" id="ref-link" value="' + escapeHtml(refLink) + '" readonly style="flex:1;" /><button class="btn btn-ghost btn-sm" onclick="copyReferralLink()">Copy</button></div></div>' +
       '<p class="muted" style="font-size:12px;margin-top:10px;">Bonus messages remaining: <strong>' + (u.referralBonusRemaining || 0) + '</strong></p>' +
+      (u.referralDiscountPct ? '<p class="muted" style="font-size:12px;margin-top:4px;">Referral discount earned: <strong>' + u.referralDiscountPct + '% off Pro</strong> (one-time, locked in).</p>' : "") +
     '</div>';
 }
 function copyReferralLink(){
@@ -2602,18 +2882,25 @@ function copyReferralLink(){
   showToast("Referral link copied.");
 }
 function openUpgradeModal(){
-  // Founding-member discount — real server-tracked eligibility
-  // (isFoundingMember, set once at signup), not just a frontend label.
-  var isFounding = !!(STATE.auth && STATE.auth.user && STATE.auth.user.isFoundingMember);
-  var priceHtml = isFounding
-    ? '<span style="text-decoration:line-through;opacity:.5;">$15</span> <strong style="color:var(--primary);">$7.50/mo</strong> — founding member price, locked in until Phase 2'
+  // Founding-member (50%, first USER_THRESHOLD signups) and referral (one-
+  // time 5%, first referral milestone) discounts stack additively — both
+  // are just real, server-tracked fields on the user (isFoundingMember,
+  // referralDiscountPct), never recomputed client-side.
+  var u = (STATE.auth && STATE.auth.user) || {};
+  var isFounding = !!u.isFoundingMember;
+  var refPct = u.referralDiscountPct || 0;
+  var totalPct = (isFounding ? 50 : 0) + refPct;
+  var discountedPrice = (15 * (1 - totalPct / 100)).toFixed(2).replace(/\.00$/, "");
+  var discountLabel = [isFounding ? "founding member 50%" : null, refPct ? (refPct + "% referral") : null].filter(Boolean).join(" + ");
+  var priceHtml = totalPct
+    ? '<span style="text-decoration:line-through;opacity:.5;">$15</span> <strong style="color:var(--primary);">$' + discountedPrice + '/mo</strong> — ' + discountLabel + ' discount, locked in'
     : '$15/mo';
   openModal(
     '<h3>SourceVenture Pro — ' + priceHtml + '</h3>' +
     '<p class="modal-sub">300 coach messages/24h instead of 10, and an AI-generated business plan for this project.</p>' +
     '<p class="muted" style="font-size:12.5px;margin:10px 0 0;">Plus a 15-minute 1:1 coach review call — <em>coming soon</em>.</p>' +
     '<div class="card" style="padding:16px;margin:14px 0;background:var(--surface-highest);"><p class="muted" style="font-size:13px;margin:0;">Payments aren\'t connected yet — Coming soon. Until then, plans are activated manually by the SourceVenture team.' +
-      (isFounding ? " Your founding-member 50% discount is already locked in and will apply automatically once billing goes live." : "") + '</p></div>' +
+      (totalPct ? " Your " + discountLabel + " discount is already locked in and will apply automatically once billing goes live." : "") + '</p></div>' +
     '<div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="closeModal()">Close</button></div>'
   );
 }
@@ -2635,7 +2922,23 @@ function renderAccountTab(el){
     '<p class="muted" style="font-size:11px;margin-bottom:12px;">Email is set at signup and can\'t be changed here yet.</p>' +
     '<p class="auth-error" id="account-error"></p>' +
     '<button class="btn btn-primary btn-sm" onclick="saveAccountName()">Save name</button>' +
+  '</div>' +
+  '<div class="card" style="padding:24px;max-width:480px;margin-top:16px;">' +
+    '<h3 style="font-size:15px;margin-bottom:12px;">Notifications</h3>' +
+    '<label class="auth-checkbox-row" style="margin-top:0;"><input type="checkbox" id="settings-email-notifs" ' + (u.emailNotifications !== false ? "checked" : "") + ' onchange="saveEmailNotifPref(this.checked)" /> Email me updates about my account</label>' +
   '</div>';
+}
+async function saveEmailNotifPref(checked){
+  try{
+    var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ emailNotifications: checked }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't save");
+    setAuth(data.user);
+    showToast(checked ? "You'll get email updates." : "Email updates turned off.");
+  }catch(e){
+    showToast(e.message, true);
+    var cb = $("settings-email-notifs"); if(cb) cb.checked = !checked;
+  }
 }
 async function saveAccountName(){
   var name = $("account-name").value.trim();
