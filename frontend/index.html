@@ -1602,7 +1602,10 @@ const ROUTES = [
   { test:/^#\/plan\/([^\/]+)$/, name:"plan" },
   { test:/^#\/investors$/, name:"investors" },
   { test:/^#\/settings$/, name:"settings" },
-  { test:/^#\/settings\/([^\/]+)$/, name:"settings" },
+  // Allows an optional ?query (e.g. ?checkout=success from the Stripe
+  // redirect) after the tab name without it leaking into the captured
+  // param — [^\/?]+ stops at either a slash or a question mark.
+  { test:/^#\/settings\/([^\/?]+)(?:\?.*)?$/, name:"settings" },
   { test:/^#\/admin$/, name:"admin" }
 ];
 
@@ -2950,7 +2953,28 @@ async function renderSettings(main, tab){
 
   var el = $("settings-content");
   if(tab === "account") renderAccountTab(el);
-  else if(tab === "plan") renderPlanTab(el);
+  else if(tab === "plan"){
+    // Stripe redirects back here after Checkout — success needs a fresh
+    // /api/auth/me since the webhook (a separate request from Stripe's
+    // servers) may have already flipped `plan` to pro by the time the
+    // browser gets redirected back.
+    var qIdx = window.location.hash.indexOf("?");
+    var checkoutResult = qIdx !== -1 ? new URLSearchParams(window.location.hash.slice(qIdx+1)).get("checkout") : null;
+    if(checkoutResult === "success"){
+      history.replaceState(null, "", window.location.pathname + "#/settings/plan");
+      fetch(API_BASE + "/api/auth/me", { credentials:"include" }).then(function(r){ return r.json(); }).then(function(u){
+        setAuth(u);
+        showToast(u.plan === "pro" ? "You're on Pro now." : "Payment received — this can take a few seconds to confirm.");
+        renderPlanTab(el);
+      });
+    } else if(checkoutResult === "cancel"){
+      history.replaceState(null, "", window.location.pathname + "#/settings/plan");
+      showToast("Checkout cancelled — no charge made.");
+      renderPlanTab(el);
+    } else {
+      renderPlanTab(el);
+    }
+  }
   else if(tab === "security") renderSecurityTab(el);
   else if(tab === "privacy") renderPrivacyTab(el);
   else renderAccountTab(el);
@@ -2968,8 +2992,8 @@ function renderPlanTab(el){
       '</div>' +
       '<p class="muted" style="font-size:13px;margin-bottom:14px;">' + currentDailyCap() + ' AI coach messages / rolling 24h' + (isPro ? ", plus the AI-generated business plan." : ".") + '</p>' +
       (isPro
-        ? '<p class="muted" style="font-size:12px;">You\'re on Pro. Thanks for supporting SourceVenture.</p>'
-        : '<button class="btn btn-primary btn-sm" onclick="openUpgradeModal()">Upgrade to Pro — $15/mo</button>') +
+        ? '<p class="muted" style="font-size:12px;margin-bottom:10px;">You\'re on Pro. Thanks for supporting SourceVenture.</p><button class="btn btn-ghost btn-sm" onclick="openBillingPortal()">Manage billing</button>'
+        : '<button class="btn btn-primary btn-sm" onclick="startCheckout()" id="upgrade-btn">Upgrade to Pro — $15/mo</button>') +
     '</div>' +
     '<div class="card" style="padding:24px;max-width:520px;">' +
       '<h3 style="font-size:16px;margin-bottom:6px;">Referrals</h3>' +
@@ -3003,10 +3027,47 @@ function openUpgradeModal(){
     '<h3>SourceVenture Pro — ' + priceHtml + '</h3>' +
     '<p class="modal-sub">300 coach messages/24h instead of 10, and an AI-generated business plan for this project.</p>' +
     '<p class="muted" style="font-size:12.5px;margin:10px 0 0;">Plus a 15-minute 1:1 coach review call — <em>coming soon</em>.</p>' +
-    '<div class="card" style="padding:16px;margin:14px 0;background:var(--surface-highest);"><p class="muted" style="font-size:13px;margin:0;">Payments aren\'t connected yet — Coming soon. Until then, plans are activated manually by the SourceVenture team.' +
-      (totalPct ? " Your " + discountLabel + " discount is already locked in and will apply automatically once billing goes live." : "") + '</p></div>' +
-    '<div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="closeModal()">Close</button></div>'
+    // 2026-09-05: merged with colombofilippo's real Stripe Checkout (was a
+    // "not connected yet" placeholder here). Checkout charges STRIPE_PRICE_ID
+    // as-is — there's no per-user discount applied to the Stripe session
+    // itself yet (that needs a real Stripe Coupon wired into
+    // create_checkout_session, not done tonight), so this deliberately
+    // does NOT claim the discount is automatic. Honest placeholder instead
+    // of a false promise; real reconciliation stays a quick manual step
+    // (email/admin plan-toggle) until that's built.
+    (totalPct ? '<p class="muted" style="font-size:12.5px;margin:8px 0 0;">Your ' + discountLabel + ' discount is noted on your account — email us after checkout and we\'ll confirm the adjusted rate.</p>' : "") +
+    '<div class="modal-actions"><button class="btn btn-primary btn-block" onclick="startCheckout()">Continue to payment</button><button class="btn btn-ghost btn-block" onclick="closeModal()">Not now</button></div>'
   );
+}
+// Real Stripe Checkout — redirects to Stripe's own hosted page, this app
+// never sees card details. Falls back to an honest "not connected yet"
+// message (never a fake success) if the backend 503s because
+// STRIPE_SECRET_KEY/STRIPE_PRICE_ID aren't set.
+async function startCheckout(){
+  var btn = $("upgrade-btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Redirecting…"; }
+  try{
+    var res = await fetch(API_BASE + "/api/billing/checkout", { method:"POST", credentials:"include", headers: csrfHeaders() });
+    if(res.status === 503){
+      closeModal();
+      openModal('<h3>Payments aren\'t connected yet</h3><p class="modal-sub">The SourceVenture team hasn\'t finished setting up billing on this server. Plans are activated manually for now.</p><div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="closeModal()">Close</button></div>');
+      return;
+    }
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not start checkout");
+    window.location.href = data.url;
+  }catch(e){
+    showToast(e.message || "Could not start checkout.", true);
+    if(btn){ btn.disabled = false; btn.textContent = "Upgrade to Pro — $15/mo"; }
+  }
+}
+async function openBillingPortal(){
+  try{
+    var res = await fetch(API_BASE + "/api/billing/portal", { method:"POST", credentials:"include", headers: csrfHeaders() });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not open billing portal");
+    window.location.href = data.url;
+  }catch(e){ showToast(e.message || "Could not open billing portal.", true); }
 }
 
 function renderAccountTab(el){
