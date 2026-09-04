@@ -1578,21 +1578,47 @@ async def _try_gemini(system: str, messages: list, max_tokens: int) -> Optional[
     # OpenAI-compatible endpoint — no separate SDK needed, one fetch shape
     # covers this free provider.
     oa_messages = [{"role": "system", "content": system}] + messages
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                headers={"Authorization": f"Bearer {GEMINI_API_KEY}", "Content-Type": "application/json"},
-                json={"model": GEMINI_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages, "reasoning_effort": "none"},
-            )
-        if res.status_code != 200:
+    # 2026-09-05 (Denis: "something wrong with the ai... make it so that
+    # never happens") — the shared free-tier Gemini key has a hard cap of
+    # 5 requests/minute (confirmed live: a burst of test calls tripped a
+    # real 429 RESOURCE_EXHAUSTED). A rating alone burns 4 calls (3 judges
+    # + chairman), so that ceiling is genuinely tight under real
+    # concurrent use — no code change raises Google's own quota. What this
+    # CAN fix: a transient 429 mid-burst used to fail the whole request
+    # immediately. Now it waits out Google's own suggested retryDelay
+    # (falls back to 15s if the response doesn't include one) and retries
+    # up to twice before giving up — turns "burst of activity failed" into
+    # "burst of activity took a bit longer", covering the overwhelming
+    # majority of real single-user traffic. It can't manufacture quota
+    # that plain doesn't exist under sustained heavy concurrent load.
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    headers={"Authorization": f"Bearer {GEMINI_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": GEMINI_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages, "reasoning_effort": "none"},
+                )
+            if res.status_code == 200:
+                content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+                return content or None
+            if res.status_code == 429 and attempt < 2:
+                delay = 15.0
+                try:
+                    for detail in res.json().get("error", {}).get("details", []):
+                        if detail.get("@type", "").endswith("RetryInfo"):
+                            delay = float(detail["retryDelay"].rstrip("s")) + 1
+                except Exception:  # noqa: BLE001 — malformed error body, just use the default delay
+                    pass
+                log.warning("Gemini 429, retrying in %.1fs (attempt %d/3)", delay, attempt + 1)
+                await asyncio.sleep(min(delay, 45.0))
+                continue
             log.warning("Gemini HTTP %s: %s", res.status_code, res.text[:300])
             return None
-        content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
-        return content or None
-    except Exception as e:  # noqa: BLE001 — any transport failure just falls through to the next provider
-        log.warning("Gemini call failed: %s", e)
-        return None
+        except Exception as e:  # noqa: BLE001 — any transport failure just falls through to the next provider
+            log.warning("Gemini call failed: %s", e)
+            return None
+    return None
 
 
 async def _try_anthropic(system: str, messages: list, max_tokens: int) -> Optional[str]:
