@@ -165,6 +165,24 @@ def db_connect():
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+# 2026-09-05 (real bug, found via a live browser test — every httpx/curl
+# test all day masked this because those hit api.sourceventure.dev
+# directly, never simulating a real browser's cross-subdomain cookie
+# visibility): the CSRF cookie is deliberately non-httpOnly so frontend JS
+# can read it via document.cookie and echo it back as a header (see
+# require_csrf below). Without an explicit Domain, FastAPI/Starlette sets
+# it host-only for whichever host issued it — api.sourceventure.dev in
+# prod. document.cookie on the FRONTEND's origin (sourceventure.dev, a
+# sibling subdomain, not a parent/child of api.sourceventure.dev) can
+# never see a cookie scoped that narrowly, so csrfHeaders() on the real
+# frontend always came back empty and every state-changing request
+# (publish, rate, coach, settings, notifications, admin, billing) 403'd
+# with "Missing or invalid CSRF token" for every real user — silently,
+# since local dev never hits this (localhost cookies aren't port-scoped,
+# so it "worked" there by accident). Set COOKIE_DOMAIN=.sourceventure.dev
+# in prod so the cookie is visible on the whole domain family; leave unset
+# for local dev (host-only there is correct and this is a no-op then).
+COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", "") or None
 COOKIE_NAME = "session_token"
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "x-csrf-token"
@@ -536,7 +554,9 @@ def set_session_cookie(response: Response, token: str):
     # has to read it to echo it back as a header). SameSite=Lax already
     # blocks the cookie from riding along on a cross-site POST, but this is
     # real defense-in-depth, and costs nothing once wired through (see
-    # require_csrf below + the frontend's csrfHeaders() helper).
+    # require_csrf below + the frontend's csrfHeaders() helper). domain=
+    # COOKIE_DOMAIN so it's actually readable by JS on the frontend's own
+    # origin, not just api.sourceventure.dev — see COOKIE_DOMAIN's comment.
     response.set_cookie(
         key=CSRF_COOKIE_NAME,
         value=secrets.token_urlsafe(24),
@@ -545,6 +565,7 @@ def set_session_cookie(response: Response, token: str):
         secure=COOKIE_SECURE,
         samesite="lax",
         path="/",
+        domain=COOKIE_DOMAIN,
     )
 
 
@@ -1136,6 +1157,10 @@ def logout(request: Request, response: Response, _csrf=Depends(require_csrf)):
         finally:
             conn.close()
     response.delete_cookie(COOKIE_NAME, path="/")
+    # Same domain= this cookie was actually SET with (see COOKIE_DOMAIN) —
+    # delete_cookie has to match domain/path exactly or the browser just
+    # ignores it and the old csrf_token cookie lingers.
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
     return {"ok": True}
 
 
@@ -2116,8 +2141,22 @@ async def _chairman_synthesize(req: RateRequest, votes: List[dict]) -> Optional[
         return None
 
 
+async def _staggered_council_member(key: str, prompt: str, req: RateRequest, delay: float) -> Optional[dict]:
+    if delay:
+        await asyncio.sleep(delay)
+    return await _council_member(key, prompt, req)
+
+
 async def run_council_rating(req: RateRequest) -> dict:
-    results = await asyncio.gather(*[_council_member(key, prompt, req) for key, prompt in COUNCIL])
+    # 2026-09-05 (confirmed live: a real 429 burst from all 3 judges firing
+    # in the exact same instant, on the shared free-tier Gemini key's
+    # 5-req/minute cap) — a small stagger between judges (0.35s apart)
+    # costs nothing perceptible against multi-second LLM latency but
+    # meaningfully reduces the odds of a synchronized burst tripping the
+    # rate limit that a small stagger doesn't eliminate but does reduce.
+    results = await asyncio.gather(*[
+        _staggered_council_member(key, prompt, req, i * 0.35) for i, (key, prompt) in enumerate(COUNCIL)
+    ])
     votes = [r for r in results if r]
     if not votes:
         raise HTTPException(status_code=502, detail="Every council member failed — try again")

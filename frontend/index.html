@@ -481,6 +481,14 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .scarcity h2{font-size:24px;margin-bottom:10px;}
 .scarcity p{color:var(--on-surface-variant);max-width:460px;margin-bottom:22px;font-size:14.5px;}
 .prog-wrap{width:100%;max-width:340px;margin-bottom:18px;}
+/* 2026-09-05: confirmed live — on the investors page (a short card, so
+   the fixed #help-fab's corner always lands somewhere in its viewport-
+   relative zone regardless of scroll), the progress track ran edge-to-
+   edge in the card and the FAB visually sliced through its right end.
+   Trimming the track short of the FAB's ~54px corner column on mobile
+   fixes this specific confirmed case without touching every page that
+   happens to have content near that corner. */
+@media(max-width:760px){.prog-wrap{max-width:calc(100% - 54px);}}
 .prog-top{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;}
 .prog-top .now{color:var(--primary);}
 .prog-track{height:8px;border-radius:20px;background:var(--surface-high);border:1px solid var(--outline-variant);overflow:hidden;}
@@ -684,6 +692,18 @@ input[type="password"]::-webkit-credentials-auto-fill-button{display:none !impor
 @media (prefers-reduced-motion:reduce){.auth-step{animation:none;}.auth-icon-ring{animation:none;}.auth-icon-ring.spin .material-symbols-outlined{animation:none;}}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-high);border:1px solid var(--outline-variant);border-radius:var(--radius);padding:12px 20px;font-size:13px;opacity:0;pointer-events:none;transition:all .25s ease;z-index:300;max-width:90vw;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+/* 2026-09-05 (Denis: "no overlapping uis in mobile" — confirmed live: a
+   bottom:22px toast landed directly on top of the coach page's "Improve
+   my pitch" button right after publishing, exactly when a user would
+   want to tap it). Bottom-anchored real content (coach action buttons,
+   the help FAB) is common enough on mobile that a bottom toast will
+   always be at risk of covering SOMETHING there — moving it up near the
+   topbar instead sidesteps the whole class of collision rather than
+   chasing one page at a time. */
+@media(max-width:640px){
+  .toast{bottom:auto;top:calc(var(--topbar-h) + 10px);transform:translateX(-50%) translateY(-14px);}
+  .toast.show{transform:translateX(-50%) translateY(0);}
+}
 .toast.err{border-color:rgba(255,107,107,0.35);color:var(--error);}
 .skel{background:linear-gradient(90deg,var(--surface-low) 25%,var(--surface-high) 37%,var(--surface-low) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px;}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}

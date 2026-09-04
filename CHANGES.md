@@ -1,5 +1,53 @@
 # CHANGES.md — SourceVenture
 
+## 2026-09-05 (round 2, same day) — Critical fix: CSRF cookie was invisible to the real frontend; full mobile-overlap review
+
+Denis: "no bugs, review everything, make sure AI works, projects publish,
+no overlapping UIs in mobile" — a dedicated real-browser audit (every
+prior test today used curl/httpx hitting api.sourceventure.dev directly,
+which cannot expose this class of bug at all).
+
+- **The single most impactful bug this session:** the CSRF cookie
+  (`csrf_token`, non-httpOnly by design so frontend JS can read it) was
+  being set with no explicit `Domain`, defaulting host-only to
+  `api.sourceventure.dev`. `document.cookie` on the real frontend's own
+  origin (`sourceventure.dev`, a SIBLING subdomain, not a parent/child of
+  the API host) can never see a cookie scoped that narrowly — confirmed
+  directly via `context.cookies()` and `document.cookie` in a real
+  Playwright browser. This meant `csrfHeaders()` always sent an empty
+  header on the real site, and every single state-changing request
+  (publish, rate, coach messages, settings, notifications, admin,
+  billing) 403'd with "Missing or invalid CSRF token" for every real
+  visitor — invisible to all of today's earlier httpx-based testing,
+  which hits the API directly and never simulates this cross-subdomain
+  cookie boundary. Fixed with a new `COOKIE_DOMAIN` env var
+  (`.sourceventure.dev` in prod, unset/host-only for local dev where it's
+  a no-op) applied to the CSRF cookie's `set_cookie`/`delete_cookie`
+  calls. Re-verified live in a real browser end to end: signup → publish
+  → coach message → rating → notifications, all green.
+- Small additional AI resilience: the rating council's 3 judges now fire
+  0.35s apart instead of in the exact same instant, reducing (not
+  eliminating) the odds of a synchronized 429 burst against the shared
+  free-tier Gemini key — confirmed live that the key's real quota is
+  extremely thin (a 2nd call in immediate succession already 429s under
+  today's heavy testing load).
+- Two more confirmed real mobile overlaps, found via actual device-width
+  screenshots (not code review): a bottom-anchored toast notification
+  landed directly on the coach page's "Improve my pitch" button right
+  after publishing; the investors page's progress bar ran edge-to-edge
+  under the fixed help-widget button. Both fixed (toast moved near the
+  topbar on mobile; the progress track now stops short of the FAB's
+  corner).
+- Full page-by-page mobile screenshot review (dashboard, new-project,
+  coach, project detail, investor summary, business plan, projects list,
+  investors, notifications, all 4 settings tabs, docs/support, landing) —
+  no other overlaps found.
+- Resend is still sandbox-mode (own email address only). Denis chose to
+  provide a full-access API key next round so the domain can actually be
+  added and verified rather than doing the DNS step manually — no free
+  plugin bypasses this; it's how every real transactional-email provider
+  works, and Resend's own domain verification is free, just needs the key.
+
 ## 2026-09-05 — Merged collaborator's Stripe billing, root-caused "AI isn't working," full bug-fix + feature pass, deployed
 
 Denis: merge colombofilippo47's Stripe billing commit without losing
