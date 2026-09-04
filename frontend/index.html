@@ -1539,6 +1539,7 @@ function projectCardHtml(p){
    ============================================================ */
 async function renderNewProject(main){
   await ensureMe();
+  NP_IMAGES = { logoDataUrl: null, bannerDataUrl: null };
   main.innerHTML = '<div class="canvas">' +
     '<div class="eyebrow">New project</div><h1 class="page-title">Publish a project</h1>' +
     '<p class="page-sub stack-lg">Free. A public GitHub repo gives your coach extra real-world context, but it\'s optional — the AI works from whatever you give it.</p>' +
@@ -1551,11 +1552,38 @@ async function renderNewProject(main){
       '<div class="field"><label>Problem you\'re solving</label><textarea id="np-problem" rows="3" placeholder="Optional, but it sharpens every piece of AI feedback — who has this problem, how big is it, why does it matter now."></textarea></div>' +
       '<div class="field"><label>Team</label><textarea id="np-team" rows="2" placeholder="Optional — who\'s building this and why they\'re the right people for it."></textarea></div>' +
       '<div class="field"><label>GitHub repo URL <span class="muted" style="font-weight:400;">(optional)</span></label><input type="text" id="np-repo" placeholder="https://github.com/owner/repo" /><div class="hint">If given, we fetch the public description, README, top-level files and contributor count as extra evidence.</div></div>' +
+      '<div class="field"><label>Logo <span class="muted" style="font-weight:400;">(optional)</span></label>' +
+        '<div style="display:flex;align-items:center;gap:12px;">' +
+          '<div id="np-logo-preview" style="width:56px;height:56px;border-radius:12px;background:var(--surface-highest);flex:none;overflow:hidden;display:flex;align-items:center;justify-content:center;"><span class="material-symbols-outlined muted">image</span></div>' +
+          '<input type="file" id="np-logo-file" accept="image/*" onchange="handleProjectImagePick(event,\'logo\')" />' +
+        '</div></div>' +
+      '<div class="field"><label>Banner <span class="muted" style="font-weight:400;">(optional)</span></label>' +
+        '<div id="np-banner-preview" style="width:100%;aspect-ratio:3/1;border-radius:12px;background:var(--surface-highest);overflow:hidden;display:flex;align-items:center;justify-content:center;margin-bottom:8px;"><span class="material-symbols-outlined muted">panorama</span></div>' +
+        '<input type="file" id="np-banner-file" accept="image/*" onchange="handleProjectImagePick(event,\'banner\')" />' +
+      '</div>' +
       '<button class="btn btn-primary btn-block" id="np-submit" onclick="submitNewProject()">Publish & open my coach</button>' +
     '</div>' +
   '</div>';
 }
 
+// Same FileReader->base64 pattern as handleAvatarPick, just holding the
+// result in module state (NP_IMAGES) until the actual publish call,
+// since a project doesn't exist server-side yet at picking time.
+var NP_IMAGES = { logoDataUrl: null, bannerDataUrl: null };
+function handleProjectImagePick(ev, kind){
+  var file = ev.target.files[0];
+  if(!file) return;
+  var maxBytes = kind === "logo" ? 600 * 1024 : 1500 * 1024;
+  if(file.size > maxBytes){ showToast("That image is too large — under ~" + Math.round(maxBytes/1024) + "KB please.", true); ev.target.value = ""; return; }
+  var reader = new FileReader();
+  reader.onload = function(){
+    var key = kind === "logo" ? "logoDataUrl" : "bannerDataUrl";
+    NP_IMAGES[key] = reader.result;
+    var preview = $(kind === "logo" ? "np-logo-preview" : "np-banner-preview");
+    preview.innerHTML = '<img src="' + reader.result + '" style="width:100%;height:100%;object-fit:cover;" />';
+  };
+  reader.readAsDataURL(file);
+}
 async function submitNewProject(){
   var name = $("np-name").value.trim();
   var tagline = $("np-tagline").value.trim();
@@ -1588,7 +1616,8 @@ async function submitNewProject(){
     repoUrl: parsed ? repoUrl : null, owner: parsed ? parsed.owner : null, repo: parsed ? parsed.repo : null,
     language:null, stars:null, contributors:null, files:[], readmeOk:false,
     status: "published", createdAt: Date.now(), publishedAt: Date.now(), repoSyncedAt: null,
-    investorSummary: null, investorSummaryDraft: null, investorSummaryApprovedAt: null, signal: null
+    investorSummary: null, investorSummaryDraft: null, investorSummaryApprovedAt: null, signal: null,
+    logoDataUrl: NP_IMAGES.logoDataUrl || null, bannerDataUrl: NP_IMAGES.bannerDataUrl || null
   };
 
   if(parsed){
@@ -1620,6 +1649,27 @@ async function submitNewProject(){
 /* ============================================================
    PROJECT DETAIL
    ============================================================ */
+// Change logo/banner on an EXISTING project — loads the current project,
+// patches just the one image field, saves via the same PUT the rest of
+// project editing uses, then re-renders so the new image shows immediately.
+async function handleProjectImageUpdate(ev, projectId, kind){
+  var file = ev.target.files[0];
+  if(!file) return;
+  var maxBytes = kind === "logo" ? 600 * 1024 : 1500 * 1024;
+  if(file.size > maxBytes){ showToast("That image is too large — under ~" + Math.round(maxBytes/1024) + "KB please.", true); return; }
+  var reader = new FileReader();
+  reader.onload = async function(){
+    try{
+      var p = await loadProject(projectId);
+      if(!p) throw new Error("Project not found");
+      p[kind === "logo" ? "logoDataUrl" : "bannerDataUrl"] = reader.result;
+      await saveProject(p);
+      showToast((kind === "logo" ? "Logo" : "Banner") + " updated.");
+      router();
+    }catch(e){ showToast("Couldn't save that image. Try again.", true); }
+  };
+  reader.readAsDataURL(file);
+}
 async function renderProjectDetail(main, id){
   var p = await loadProject(id);
   if(!p){
@@ -1628,8 +1678,23 @@ async function renderProjectDetail(main, id){
   }
   main.innerHTML = '<div class="canvas">' +
     '<div class="eyebrow">Project</div>' +
+    // Banner — a real hero strip when set, an empty upload prompt otherwise
+    // (Denis: "build the banner thing"). Same instant-save-on-pick pattern
+    // as the account avatar — pick a file, it uploads and re-renders, no
+    // separate "save" step.
+    '<div id="proj-banner-wrap" style="position:relative;border-radius:16px;overflow:hidden;margin-bottom:16px;height:160px;background:var(--surface-highest);' + (p.bannerDataUrl ? '' : 'display:flex;align-items:center;justify-content:center;') + '">' +
+      (p.bannerDataUrl ? '<img src="' + p.bannerDataUrl + '" style="width:100%;height:100%;object-fit:cover;" />' : '<span class="muted" style="font-size:12.5px;">No banner set</span>') +
+      '<label class="btn btn-ghost btn-sm" style="position:absolute;bottom:10px;right:10px;cursor:pointer;">' + (p.bannerDataUrl ? "Change banner" : "Add banner") +
+        '<input type="file" accept="image/*" style="display:none;" onchange="handleProjectImageUpdate(event,\'' + p.id + '\',\'banner\')" /></label>' +
+    '</div>' +
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">' +
-      '<div><h1 class="page-title">' + escapeHtml(p.name) + '</h1><p class="page-sub">' + escapeHtml(p.tagline||"") + '</p></div>' +
+      '<div style="display:flex;gap:14px;align-items:center;">' +
+        '<label style="position:relative;cursor:pointer;flex:none;">' +
+          (p.logoDataUrl ? '<img src="' + p.logoDataUrl + '" style="width:52px;height:52px;border-radius:12px;object-fit:cover;" />' : '<div style="width:52px;height:52px;border-radius:12px;background:var(--surface-highest);display:flex;align-items:center;justify-content:center;"><span class="material-symbols-outlined muted" style="font-size:20px;">image</span></div>') +
+          '<input type="file" accept="image/*" style="display:none;" onchange="handleProjectImageUpdate(event,\'' + p.id + '\',\'logo\')" />' +
+        '</label>' +
+        '<div><h1 class="page-title">' + escapeHtml(p.name) + '</h1><p class="page-sub">' + escapeHtml(p.tagline||"") + '</p></div>' +
+      '</div>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="nav(\'#/coach/' + p.id + '\')">Open Coach</button><button class="btn btn-ghost btn-sm" onclick="nav(\'#/summary/' + p.id + '\')">Investor Summary</button></div>' +
     '</div>' +
     (p.repo ?

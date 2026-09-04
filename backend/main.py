@@ -511,6 +511,13 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+# Same data-URL-in-JSON approach as the user avatar (MAX_AVATAR_BYTES,
+# further down) — logo is small/square so gets the same cap; banner is
+# wide so gets a bit more room.
+MAX_PROJECT_LOGO_BYTES = 600_000
+MAX_PROJECT_BANNER_BYTES = 1_500_000
+
+
 class ProjectIn(BaseModel):
     id: str
     status: str = "draft"
@@ -532,6 +539,18 @@ class ProjectIn(BaseModel):
     category: Optional[str] = Field(default=None, max_length=80)
     problem: Optional[str] = Field(default=None, max_length=2000)
     team: Optional[str] = Field(default=None, max_length=2000)
+    # Project logo/banner (Denis: "build the banner thing") — same
+    # data-URL-in-the-JSON-blob approach as the user avatar, just two more
+    # fields on the project. "" clears it (same convention as avatarDataUrl).
+    logoDataUrl: Optional[str] = Field(default=None, max_length=MAX_PROJECT_LOGO_BYTES)
+    bannerDataUrl: Optional[str] = Field(default=None, max_length=MAX_PROJECT_BANNER_BYTES)
+
+    @field_validator("logoDataUrl", "bannerDataUrl")
+    @classmethod
+    def _validate_image_data_url(cls, v):
+        if v and v != "" and not v.startswith("data:image/"):
+            raise ValueError("must be a data:image/... URL")
+        return v
 
     class Config:
         extra = "allow"
