@@ -1,5 +1,35 @@
 # CHANGES.md — SourceVenture
 
+## 2026-09-04 — Section 1/First Drop reconciled, deployed to Vercel
+
+Merged colombofilippo's `integrate/denis-plus-analytics` branch (his own
+First Drop implementation — GitHub-optional validation, 10/24h free cap,
+Pro scaffold, referrals, Source Score rebrand, investor-summary approval,
+AI business plan) into the working branch; verified live rather than just
+reviewing code. Then closed the remaining gaps against the fuller spec:
+
+- Real bug fix: chat pane couldn't scroll to the input on mobile (two
+  stacked flexbox/grid min-height defaults).
+- Circular Source Score ring (SVG), password complexity + Cloudflare
+  Turnstile bot check on signup, GitHub Sign-In (mirrors Google OAuth).
+- SEO/AEO: robots.txt (incl. GPTBot/ClaudeBot/PerplexityBot allows),
+  sitemap.xml, llms.txt, meta/OG/Twitter tags, JSON-LD.
+- Founding-member 50% Pro discount (first 20 signups, real server-tracked
+  eligibility), real logo assets, per-project logo/banner upload,
+  "Improve my pitch" coach button (marker-based, doesn't touch the
+  system prompt), global back arrow.
+- Domain confirmed as sourceventure.dev — updated throughout.
+- Deployed frontend to Vercel (apexmedialx-8775s-projects/frontend),
+  disabled default SSO deployment protection (was blocking public
+  access), attached sourceventure.dev + www. DNS still needs pointing —
+  see the session notes for the exact record.
+- Backend (FastAPI + local SQLite) is NOT deployed to Vercel — Vercel's
+  serverless filesystem is ephemeral, so a local data.db file wouldn't
+  persist between invocations. The existing CSP already referenced
+  sourceventure.onrender.com, suggesting Render was the intended host;
+  flagged to Denis rather than deploying it somewhere that would
+  silently lose data.
+
 ## 2026-08-25 — Full-screen sign-in/sign-up + email verification wired up
 
 Denis: integrate a full-screen sign-in flow design; "do what you think is
