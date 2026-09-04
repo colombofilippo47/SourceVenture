@@ -135,7 +135,10 @@ button {
 .footer {
   position: relative;
   z-index: 30;
-  padding: 24px 16px;
+  /* Top padding clears the fixed .navbar (64px tall) — this section is the
+     only normal-flow child of .page, so without it the headline renders
+     underneath the nav instead of below it. */
+  padding: 88px 16px 24px;
   background: linear-gradient(to top, #ffffff 0%, rgba(255, 255, 255, 0.8) 50%, transparent 100%);
 }
 .footer-inner {

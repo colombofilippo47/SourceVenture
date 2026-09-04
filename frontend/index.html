@@ -3,14 +3,25 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- CSP: this app is a single file that builds its UI with inline <script>
+     and innerHTML, so 'unsafe-inline' is unavoidable without a rewrite.
+     The load-bearing part is the allowlist below — it pins exactly which
+     origins the page may talk to, so an injected script can't exfiltrate
+     to an attacker-controlled host. connect-src covers the backend
+     (localhost in dev; add your deployed API origin here) and GitHub's
+     public API; everything else is denied by default-src 'self'. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com; base-uri 'self'; form-action 'self'" />
+<!-- frame-ancestors is deliberately absent: it's ignored in a <meta> CSP and
+     only works as a real HTTP header. Set it (or X-Frame-Options) on whatever
+     serves this file in production — the API already sends X-Frame-Options. -->
 <title>SourceVenture — Venture Engineering</title>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
 :root{
   --bg:#050506;
-  --surface-lowest:#020203;
-  --surface-low:#0a0a0c;
+  --surface-lowest:#020202;
+  --surface-low:#0a0a0a;
   --surface:rgba(255,255,255,0.05);
   --surface-high:rgba(255,255,255,0.08);
   --surface-highest:rgba(255,255,255,0.12);
@@ -20,15 +31,17 @@
   --outline:rgba(255,255,255,0.35);
   --outline-variant:rgba(255,255,255,0.06);
   --border:rgba(255,255,255,0.10);
-  --primary:#5E6AD2;
-  --primary-bright:#6872D9;
+  --primary:#5c9478;
+  --primary-bright:#6ba888;
   --on-primary:#ffffff;
-  --primary-container:#6872D9;
+  --primary-container:#4e8267;
   --on-primary-container:#ffffff;
-  --accent-glow:rgba(94,106,210,0.30);
+  --accent-glow:rgba(92,148,120,0.06);
   --secondary:#8A8F98;
-  --tertiary:#A78BFA;
+  --tertiary:#c9a227;
   --error:#ff6b6b;
+  --accent-green:#5c9478;
+  --accent-green-dim:rgba(92,148,120,0.45);
   --radius:0.5rem;
   --radius-lg:1rem;
   --radius-xl:1.25rem;
@@ -37,7 +50,7 @@
   --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --ease-out-expo:cubic-bezier(0.16,1,0.3,1);
   --nav-w:280px;
-  --topbar-h:64px;
+  --topbar-h:88px;
 }
 /* Light theme — same token set as :root above, re-pointed. Every rule in
    this file already reads from these variables, so nothing else needs to
@@ -57,15 +70,17 @@
   --outline:rgba(19,21,43,0.35);
   --outline-variant:rgba(19,21,43,0.09);
   --border:rgba(19,21,43,0.14);
-  --primary:#5E6AD2;
-  --primary-bright:#4c58c0;
+  --primary:#3f7a5c;
+  --primary-bright:#356a4e;
   --on-primary:#ffffff;
-  --primary-container:#4c58c0;
+  --primary-container:#356a4e;
   --on-primary-container:#ffffff;
-  --accent-glow:rgba(94,106,210,0.16);
+  --accent-glow:rgba(63,122,92,0.07);
   --secondary:#5b5f7a;
-  --tertiary:#7c5cff;
+  --tertiary:#a3821f;
   --error:#d1453d;
+  --accent-green:#3f7a5c;
+  --accent-green-dim:rgba(63,122,92,0.30);
 }
 *{box-sizing:border-box;}
 html{scroll-behavior:smooth;}
@@ -82,17 +97,19 @@ p{margin:0;}
 
 /* ---------- layered ambient background ---------- */
 #bg-fx{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;}
-.bg-base{position:absolute;inset:0;background:radial-gradient(ellipse at top,#0d0d14 0%,var(--bg) 50%,var(--surface-lowest) 100%);}
+.bg-base{position:absolute;inset:0;background:radial-gradient(ellipse at top,#0a0a0a 0%,var(--bg) 50%,var(--surface-lowest) 100%);}
 :root[data-theme="light"] .bg-base{background:radial-gradient(ellipse at top,#ffffff 0%,var(--bg) 55%,var(--surface-lowest) 100%);}
 :root[data-theme="light"] .blob{opacity:.5;}
 :root[data-theme="light"] .bg-grid{opacity:.05;}
 :root[data-theme="light"] .bg-noise{opacity:.012;}
 .bg-grid{position:absolute;inset:0;height:900px;opacity:.025;background-image:linear-gradient(rgba(255,255,255,.6) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.6) 1px,transparent 1px);background-size:64px 64px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent);mask-image:linear-gradient(to bottom,#000,transparent);}
 .bg-noise{position:absolute;inset:0;opacity:.02;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+.bg-dots{position:absolute;inset:0;width:100%;height:100%;}
 .blob{position:absolute;border-radius:50%;will-change:transform;animation:blobFloat 9s var(--ease-out-expo) infinite;}
-.blob-1{top:-320px;left:50%;transform:translateX(-50%);width:1100px;height:1100px;background:radial-gradient(circle,rgba(94,106,210,.28) 0%,transparent 70%);filter:blur(90px);animation-duration:10s;}
-.blob-2{top:120px;left:-260px;width:700px;height:700px;background:radial-gradient(circle,rgba(167,139,250,.16) 0%,transparent 70%);filter:blur(80px);animation-duration:12s;animation-delay:-3s;}
-.blob-3{top:280px;right:-220px;width:560px;height:560px;background:radial-gradient(circle,rgba(94,150,210,.13) 0%,transparent 70%);filter:blur(75px);animation-duration:11s;animation-delay:-6s;}
+.blob-1{top:-320px;left:50%;transform:translateX(-50%);width:900px;height:900px;background:radial-gradient(circle,rgba(92,148,120,.12) 0%,transparent 70%);filter:blur(90px);animation-duration:10s;}
+.blob-2{top:120px;left:-260px;width:700px;height:700px;background:radial-gradient(circle,rgba(20,20,20,.5) 0%,transparent 70%);filter:blur(80px);animation-duration:12s;animation-delay:-3s;}
+.blob-3{top:280px;right:-220px;width:560px;height:560px;background:radial-gradient(circle,rgba(20,20,20,.5) 0%,transparent 70%);filter:blur(75px);animation-duration:11s;animation-delay:-6s;}
+:root[data-theme="light"] .blob-2,:root[data-theme="light"] .blob-3{background:radial-gradient(circle,rgba(255,255,255,.6) 0%,transparent 70%);}
 @keyframes blobFloat{0%,100%{transform:translateY(0) rotate(0deg);}50%{transform:translateY(-24px) rotate(1deg);}}
 .blob-1{animation-name:blobFloatCenter;}
 @keyframes blobFloatCenter{0%,100%{transform:translate(-50%,0) rotate(0deg);}50%{transform:translate(-50%,-24px) rotate(1deg);}}
@@ -103,10 +120,10 @@ p{margin:0;}
 
 .btn{font-weight:600;font-size:13.5px;border-radius:var(--radius);padding:10px 18px;border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo),box-shadow .2s var(--ease-out-expo),border-color .2s var(--ease-out-expo);white-space:nowrap;font-family:var(--font-mono);}
 .btn:active{transform:scale(.98);}
-.btn-primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary);box-shadow:0 0 0 1px rgba(94,106,210,.5),0 4px 12px rgba(94,106,210,.3),inset 0 1px 0 0 rgba(255,255,255,.2);}
-.btn-primary:hover{background:var(--primary-bright);box-shadow:0 0 0 1px rgba(94,106,210,.6),0 6px 24px rgba(94,106,210,.45),inset 0 1px 0 0 rgba(255,255,255,.25);}
-.btn-ghost{background:var(--surface);color:var(--on-surface);border-color:var(--outline-variant);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.06);}
-.btn-ghost:hover{background:var(--surface-high);border-color:var(--border);}
+.btn-primary{background:color-mix(in srgb, var(--primary) 78%, transparent);backdrop-filter:blur(12px) saturate(1.6);-webkit-backdrop-filter:blur(12px) saturate(1.6);color:var(--on-primary);border-color:rgba(255,255,255,.16);box-shadow:0 0 0 1px rgba(92,148,120,.16),0 1px 5px rgba(92,148,120,.10),inset 0 1px 0 0 rgba(255,255,255,.22);}
+.btn-primary:hover{background:color-mix(in srgb, var(--primary-bright) 85%, transparent);box-shadow:0 0 0 1px rgba(92,148,120,.2),0 2px 8px rgba(92,148,120,.14),inset 0 1px 0 0 rgba(255,255,255,.26);transform:translateY(-1px);}
+.btn-ghost{background:var(--surface);backdrop-filter:blur(12px) saturate(1.4);-webkit-backdrop-filter:blur(12px) saturate(1.4);color:var(--on-surface);border-color:var(--outline-variant);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.08);}
+.btn-ghost:hover{background:var(--surface-high);border-color:var(--border);transform:translateY(-1px);}
 .btn-danger{background:transparent;color:var(--error);border-color:rgba(255,107,107,.35);}
 .btn-danger:hover{background:rgba(255,107,107,.08);}
 .btn-sm{padding:7px 13px;font-size:12px;}
@@ -115,15 +132,18 @@ p{margin:0;}
 
 .wrap{max-width:1180px;margin:0 auto;padding:0 24px;}
 
-#topbar{height:var(--topbar-h);border-bottom:1px solid var(--outline-variant);background:rgba(5,5,6,.75);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:40;}
-:root[data-theme="light"] #topbar{background:rgba(244,245,251,.75);}
+#topbar{height:60px;max-width:1180px;margin:14px auto 0;border-radius:20px;border:1px solid rgba(255,255,255,.10);background:rgba(20,20,24,.55);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.02),0 8px 30px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:14px;z-index:40;}
+:root[data-theme="light"] #topbar{background:rgba(255,255,255,.55);border-color:rgba(19,21,43,.08);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(19,21,43,.02),0 8px 30px rgba(19,21,43,.10);}
+@media (max-width:1220px){#topbar{margin-left:16px;margin-right:16px;}}
 #topbar .tb-left{display:flex;align-items:center;gap:14px;}
 #topbar .tb-title{font-family:var(--font-display);font-size:18px;font-weight:700;}
 #topbar .tb-divider{width:1px;height:16px;background:var(--outline-variant);}
-#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--tertiary);text-transform:uppercase;letter-spacing:.08em;}
+#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.08em;}
 #topbar .tb-right{display:flex;align-items:center;gap:6px;}
 #topbar .tb-icon{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);}
-#topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);}
+#topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);transform:scale(1.08);}
+#topbar .tb-icon{transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo),color .2s var(--ease-out-expo);}
+#topbar .tb-icon:active{transform:scale(.92);}
 .theme-toggle{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);border:none;background:transparent;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo),color .2s var(--ease-out-expo);}
 .theme-toggle:hover{color:var(--primary);background:var(--surface-high);}
 .theme-toggle:active{transform:scale(0.85) rotate(-12deg);}
@@ -137,9 +157,19 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
 @media(max-width:900px){#sidenav{display:none;}}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
-.sn-logo{width:40px;height:40px;border-radius:var(--radius);background:linear-gradient(135deg,var(--primary),var(--tertiary));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(94,106,210,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;flex:none;}
-.sn-head h1{font-size:16px;}
-.sn-head p{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);margin-top:1px;}
+/* Sidebar header is now the account row (avatar + name), not a logo tile —
+   the brand mark below lives in the top bar and landing nav instead. */
+.sn-head-account{text-decoration:none;color:inherit;transition:background-color .2s var(--ease-out-expo);}
+.sn-head-account:hover{background:var(--surface-high);}
+.sn-head h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+.sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+.avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
+.sv-brand{display:inline-flex;align-items:center;gap:8px;}
+.sv-mark{flex:none;display:block;width:auto;}
+.sv-mark-light{display:none;}
+:root[data-theme="light"] .sv-mark-dark{display:none;}
+:root[data-theme="light"] .sv-mark-light{display:block;}
+.sv-wordmark{font-family:var(--font-display);font-weight:700;letter-spacing:-.02em;}
 .sn-newbtn{padding:14px;}
 .sn-links{flex:1;padding:8px 0;overflow-y:auto;}
 .sn-links a{display:flex;align-items:center;gap:12px;padding:11px 20px;color:var(--on-surface-variant);font-size:14px;border-left:2px solid transparent;transition:color .15s,background .15s;}
@@ -151,13 +181,21 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 
 #main{flex:1;min-width:0;padding:48px;}
 @media(max-width:760px){#main{padding:24px 18px;}}
-.canvas{max-width:900px;margin:0 auto;}
+.canvas{max-width:900px;margin:0 auto;position:relative;}
+/* 2026-08-26, Denis: "behind every text and input... a bit of black/white
+   gradient depending on mode so the pixels dont interfere." A soft radial
+   scrim behind the whole content column — sits above #bg-fx (z-index 0)
+   since .canvas lives inside #root (z-index 1) — recedes the ambient dots
+   without fully hiding them or needing a scrim on every single element. */
+.canvas::before{content:"";position:absolute;inset:-24px -40px;z-index:-1;background:radial-gradient(ellipse 70% 60% at 50% 30%,var(--bg) 0%,transparent 100%);opacity:.88;pointer-events:none;}
 .canvas-wide{max-width:1100px;margin:0 auto;}
 
-.card{background:linear-gradient(to bottom,rgba(255,255,255,.06),rgba(255,255,255,.015));border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 0 0 1px rgba(255,255,255,.03),0 2px 20px rgba(0,0,0,.4),0 0 40px rgba(0,0,0,.15);position:relative;isolation:isolate;transition:border-color .25s var(--ease-out-expo),box-shadow .25s var(--ease-out-expo);}
-.card.spotlight::before{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(300px circle at var(--mx,50%) var(--my,50%),rgba(94,106,210,.15),transparent 70%);opacity:0;transition:opacity .3s var(--ease-out-expo);pointer-events:none;z-index:0;}
+.card{background:linear-gradient(to bottom,rgba(255,255,255,.07),rgba(255,255,255,.015));backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border:1px solid rgba(255,255,255,.09);border-radius:var(--radius-lg);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.12),0 2px 20px rgba(0,0,0,.4),0 0 40px rgba(0,0,0,.15);position:relative;isolation:isolate;transition:border-color .25s var(--ease-out-expo),box-shadow .25s var(--ease-out-expo),transform .25s var(--ease-out-expo);}
+:root[data-theme="light"] .card{border-color:rgba(19,21,43,.07);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.6),0 2px 20px rgba(19,21,43,.08),0 0 40px rgba(19,21,43,.04);}
+.card:hover{transform:translateY(-2px);}
+.card.spotlight::before{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(300px circle at var(--mx,50%) var(--my,50%),rgba(92,148,120,.15),transparent 70%);opacity:0;transition:opacity .3s var(--ease-out-expo);pointer-events:none;z-index:0;}
 .card.spotlight:hover::before{opacity:1;}
-.card.spotlight:hover{border-color:var(--border);box-shadow:0 0 0 1px rgba(255,255,255,.06),0 8px 40px rgba(0,0,0,.5),0 0 80px rgba(94,106,210,.1);}
+.card.spotlight:hover{border-color:var(--border);box-shadow:0 0 0 1px rgba(255,255,255,.06),0 8px 40px rgba(0,0,0,.5),0 0 80px rgba(92,148,120,.05);}
 .card > *{position:relative;z-index:1;}
 .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--on-surface-variant);display:flex;align-items:center;gap:8px;}
 .page-title{font-family:var(--font-display);font-size:28px;margin:6px 0 6px;}
@@ -201,9 +239,10 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .form-error{color:var(--error);font-size:12.5px;margin-bottom:14px;background:rgba(255,107,107,0.10);border:1px solid rgba(255,107,107,0.35);border-radius:var(--radius);padding:10px 12px;display:none;}
 .form-error.show{display:block;}
 
-#landing-nav{height:var(--topbar-h);border-bottom:1px solid var(--outline-variant);position:sticky;top:0;background:rgba(5,5,6,.75);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);z-index:40;}
-:root[data-theme="light"] #landing-nav{background:rgba(244,245,251,.75);}
-#landing-nav .wrap{height:100%;display:flex;align-items:center;justify-content:space-between;}
+#landing-nav{height:60px;max-width:1180px;margin:14px auto 0;border-radius:20px;border:1px solid rgba(255,255,255,.10);position:sticky;top:14px;background:rgba(20,20,24,.55);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.02),0 8px 30px rgba(0,0,0,.35);z-index:40;}
+:root[data-theme="light"] #landing-nav{background:rgba(255,255,255,.55);border-color:rgba(19,21,43,.08);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(19,21,43,.02),0 8px 30px rgba(19,21,43,.10);}
+#landing-nav .wrap{height:100%;display:flex;align-items:center;justify-content:space-between;padding:0 20px;}
+@media (max-width:1220px){#landing-nav{margin-left:16px;margin-right:16px;}}
 .ln-links{display:flex;gap:26px;align-items:center;}
 .ln-links a{font-size:13.5px;color:var(--on-surface-variant);}
 .ln-links a:hover{color:var(--on-surface);}
@@ -211,16 +250,38 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .hero{padding:110px 0 120px;}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
 @media(max-width:940px){.hero-grid{grid-template-columns:1fr;}}
-.hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;background:linear-gradient(to bottom,#fff,rgba(255,255,255,.95) 55%,rgba(255,255,255,.72));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
-:root[data-theme="light"] .hero h1{background:linear-gradient(to bottom,#0d0f24,rgba(19,21,43,.92) 55%,rgba(19,21,43,.72));-webkit-background-clip:text;background-clip:text;}
+.hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;}
+/* Gradient text-fill lives on each word span, not the parent h1 — a span
+   only inherits -webkit-text-fill-color (making it transparent) but NOT
+   the parent's own background/background-clip, so without repeating the
+   gradient here every word renders as invisible transparent-on-transparent. */
+.hero h1 .word-blur{background:linear-gradient(to bottom,#fff,rgba(255,255,255,.95) 55%,rgba(255,255,255,.72));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+.word-blur{display:inline-block;opacity:0;filter:blur(10px);transform:translateY(8px);animation:wordBlurIn .7s var(--ease-out-expo) forwards;}
+@keyframes wordBlurIn{to{opacity:1;filter:blur(0);transform:translateY(0);}}
+@media (prefers-reduced-motion:reduce){.word-blur{animation:none;opacity:1;filter:none;transform:none;}}
+:root[data-theme="light"] .hero h1 .word-blur{background:linear-gradient(to bottom,#0d0f24,rgba(19,21,43,.92) 55%,rgba(19,21,43,.72));-webkit-background-clip:text;background-clip:text;}
 @media(max-width:940px){.hero h1{font-size:52px;}}
 @media(max-width:520px){.hero h1{font-size:36px;}}
 .hero .lead{font-size:16.5px;color:var(--on-surface-variant);max-width:480px;margin-bottom:28px;}
 .hero-actions{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
-.code-panel{background:var(--surface-lowest);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.03),0 20px 60px rgba(0,0,0,.5),0 0 100px rgba(94,106,210,.08);}
-.code-panel .cp-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--outline-variant);font-family:var(--font-mono);font-size:11.5px;color:var(--on-surface-variant);}
+.code-panel{background:var(--surface-lowest);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;box-shadow:0 0 0 1px rgba(255,255,255,.03),0 20px 60px rgba(0,0,0,.5),0 0 100px rgba(92,148,120,.04);}
+.code-panel .cp-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--outline-variant);font-family:var(--font-mono);font-size:11.5px;color:var(--on-surface-variant);position:relative;}
 .code-panel .cp-bar .dots{display:flex;gap:6px;}
-.code-panel .cp-bar .dots span{width:8px;height:8px;border-radius:50%;background:var(--surface-highest);}
+.code-panel .cp-bar .dots span{width:8px;height:8px;border-radius:50%;background:var(--surface-highest);display:flex;align-items:center;justify-content:center;}
+/* Real macOS-style traffic lights — red is the actual close control (the
+   ask: "when i said click out of the apple ui... i meant the 3 buttons on
+   the left, like it actually is in apple"), yellow/green stay decorative
+   like the real thing's minimize/zoom mostly are for a demo panel. */
+.dot-red{background:#ff5f57;cursor:pointer;}
+.dot-yellow{background:#febc2e;}
+.dot-green{background:#28c840;}
+.dot-glyph{opacity:0;font-size:7px;line-height:1;color:#4d0000;transition:opacity .15s ease;}
+.code-panel .cp-bar .dots:hover .dot-glyph{opacity:1;}
+@keyframes panelBobIn{from{opacity:0;transform:translateX(70px);}to{opacity:1;transform:translateX(0);}}
+@keyframes panelBobOut{to{opacity:0;transform:translateX(-40px);}}
+.code-panel.cp-entering{animation:panelBobIn .6s cubic-bezier(.34,1.56,.64,1) both;}
+.code-panel.cp-leaving{animation:panelBobOut .2s ease-in both;}
+@media (prefers-reduced-motion:reduce){.code-panel.cp-entering,.code-panel.cp-leaving{animation:none;}}
 .code-panel pre{margin:0;padding:20px;font-family:var(--font-mono);font-size:12.5px;line-height:1.9;color:var(--on-surface-variant);overflow-x:auto;}
 .code-panel .tok-kw{color:var(--tertiary);}
 .code-panel .tok-str{color:var(--primary);}
@@ -239,6 +300,16 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .step p{color:var(--on-surface-variant);font-size:13.5px;}
 footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .foot-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;color:var(--outline);font-size:12px;font-family:var(--font-mono);}
+.foot-links{display:flex;gap:16px;}
+.foot-links a{color:var(--outline);text-decoration:none;}
+.foot-links a:hover{color:var(--on-surface);text-decoration:underline;}
+.legal-page{max-width:760px;margin:0 auto;padding:80px 24px 100px;}
+.legal-page h1{font-size:2rem;margin-bottom:8px;}
+.legal-page .legal-updated{color:var(--on-surface-variant);font-size:13px;font-family:var(--font-mono);margin-bottom:40px;}
+.legal-page h2{font-size:1.15rem;margin:36px 0 12px;}
+.legal-page p,.legal-page li{color:var(--on-surface-variant);line-height:1.7;font-size:15px;}
+.legal-page ul{padding-left:20px;margin:8px 0;}
+.legal-page li{margin-bottom:6px;}
 
 .scarcity{max-width:640px;margin:0 auto 32px;padding:36px 30px;text-align:center;display:flex;flex-direction:column;align-items:center;}
 .scarcity .lock-badge{width:48px;height:48px;border-radius:50%;background:var(--surface-high);border:1px solid var(--outline-variant);display:flex;align-items:center;justify-content:center;margin-bottom:16px;}
@@ -318,26 +389,96 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 
 .overlay{position:fixed;inset:0;background:rgba(1,4,8,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:200;padding:20px;}
 .overlay.open{display:flex;}
-.modal{background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);width:100%;max-width:460px;max-height:88vh;overflow-y:auto;padding:26px;position:relative;}
+.modal{background:var(--surface);backdrop-filter:blur(24px) saturate(1.5);-webkit-backdrop-filter:blur(24px) saturate(1.5);border:1px solid rgba(255,255,255,.10);border-radius:var(--radius-lg);width:100%;max-width:460px;max-height:88vh;overflow-y:auto;padding:26px;position:relative;box-shadow:inset 0 1px 0 0 rgba(255,255,255,.12),0 20px 60px rgba(0,0,0,.5);}
+:root[data-theme="light"] .modal{border-color:rgba(19,21,43,.08);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.7),0 20px 60px rgba(19,21,43,.15);}
 .modal-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--on-surface-variant);font-size:20px;cursor:pointer;}
 .modal h3{font-size:19px;margin-bottom:6px;}
 .modal .modal-sub{color:var(--on-surface-variant);font-size:13px;margin-bottom:20px;}
 .modal-actions{display:flex;gap:10px;margin-top:8px;}
+
+/* ============================================================
+   AUTH PAGE — full-screen sign in / sign up / verify-email
+   ============================================================ */
+.auth-shell{position:relative;min-height:100vh;display:flex;flex-direction:column;background:#050506;overflow:hidden;}
+:root[data-theme="light"] .auth-shell{background:#fbfbfd;}
+.auth-canvas{position:absolute;inset:0;width:100%;height:100%;z-index:0;}
+.auth-vignette{position:absolute;inset:0;z-index:1;pointer-events:none;background:radial-gradient(ellipse at 50% 30%,rgba(5,5,6,0) 0%,rgba(5,5,6,.55) 65%,rgba(5,5,6,.92) 100%);}
+:root[data-theme="light"] .auth-vignette{background:radial-gradient(ellipse at 50% 30%,rgba(251,251,253,0) 0%,rgba(251,251,253,.55) 65%,rgba(251,251,253,.92) 100%);}
+.auth-top{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:22px 28px;}
+.auth-brand{font-family:var(--font-display);font-weight:700;font-size:16px;color:#fff;letter-spacing:-.01em;}
+:root[data-theme="light"] .auth-brand{color:#13152b;}
+.auth-main{position:relative;z-index:2;flex:1;display:flex;align-items:center;justify-content:center;padding:24px;}
+.auth-card{width:100%;max-width:380px;text-align:center;}
+.auth-card h1{font-size:2rem;font-weight:700;color:#fff;letter-spacing:-.02em;margin-bottom:6px;}
+:root[data-theme="light"] .auth-card h1{color:#13152b;}
+.auth-card .auth-sub{color:rgba(255,255,255,.55);font-size:14.5px;font-weight:300;margin-bottom:28px;}
+:root[data-theme="light"] .auth-card .auth-sub{color:rgba(19,21,43,.55);}
+.auth-field{margin-bottom:12px;}
+.auth-field input{width:100%;background:rgba(255,255,255,.05);backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3);border:1px solid rgba(255,255,255,.10);box-shadow:inset 0 1px 0 0 rgba(255,255,255,.10);color:#fff;border-radius:999px;padding:13px 18px;font-size:14px;text-align:center;transition:border-color .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
+.auth-field input::placeholder{color:rgba(255,255,255,.35);}
+.auth-field input:focus{outline:none;border-color:var(--accent-green-dim);background:rgba(255,255,255,.07);}
+.auth-field input:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
+:root[data-theme="light"] .auth-field input{background:rgba(19,21,43,.03);border-color:rgba(19,21,43,.12);color:#13152b;}
+:root[data-theme="light"] .auth-field input::placeholder{color:rgba(19,21,43,.35);}
+:root[data-theme="light"] .auth-field input:focus{background:rgba(19,21,43,.05);}
+.auth-submit-row{position:relative;margin-top:18px;}
+.auth-submit-row .auth-field{margin-bottom:0;}
+.auth-submit-row .auth-field input{padding-right:54px;}
+.auth-go{position:absolute;right:5px;top:5px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.10);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;transition:background-color .2s var(--ease-out-expo);}
+.auth-go:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
+.auth-go:hover{background:var(--accent-green);color:#04150e;}
+.auth-go[disabled]{opacity:.5;cursor:not-allowed;}
+:root[data-theme="light"] .auth-go{background:rgba(19,21,43,.08);color:#13152b;}
+.auth-error{color:#ff8a8a;font-size:12.5px;margin:14px 0 0;min-height:1px;}
+.auth-google-btn{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:18px;}
+.auth-google-btn svg{flex:none;}
+.auth-divider{display:flex;align-items:center;gap:12px;margin-bottom:18px;color:rgba(255,255,255,.35);font-size:12px;}
+:root[data-theme="light"] .auth-divider{color:rgba(19,21,43,.35);}
+.auth-divider::before,.auth-divider::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.12);}
+:root[data-theme="light"] .auth-divider::before,:root[data-theme="light"] .auth-divider::after{background:rgba(19,21,43,.12);}
+.auth-switch{color:rgba(255,255,255,.4);font-size:12.5px;margin-top:22px;}
+:root[data-theme="light"] .auth-switch{color:rgba(19,21,43,.45);}
+.auth-switch a{color:var(--accent-green);text-decoration:underline;text-underline-offset:2px;}
+.auth-icon-ring{width:56px;height:56px;border-radius:50%;margin:0 auto 22px;display:flex;align-items:center;justify-content:center;background:var(--accent-green-dim);animation:authRingIn .45s var(--ease-out-expo) both;}
+@keyframes authRingIn{from{opacity:0;transform:scale(.6);}to{opacity:1;transform:scale(1);}}
+.auth-icon-ring .material-symbols-outlined{font-size:28px;color:var(--accent-green);}
+.auth-icon-ring.err{background:rgba(255,107,107,.18);}
+.auth-icon-ring.err .material-symbols-outlined{color:#ff8a8a;}
+.auth-icon-ring.spin .material-symbols-outlined{animation:authSpin 1.1s linear infinite;}
+@keyframes authSpin{to{transform:rotate(360deg);}}
+.auth-step{animation:authStepIn .38s var(--ease-out-expo) both;}
+@keyframes authStepIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+.auth-resend{background:none;border:none;color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;padding:0;}
+.auth-resend:hover{color:var(--accent-green);}
+.auth-resend[disabled]{color:rgba(255,255,255,.25);cursor:default;}
+:root[data-theme="light"] .auth-resend{color:rgba(19,21,43,.5);}
+.verify-badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--accent-green);background:var(--accent-green-dim);border-radius:999px;padding:5px 12px;margin-left:10px;}
+.verify-badge .material-symbols-outlined{font-size:14px;}
+@media (max-width:520px){.auth-card h1{font-size:1.65rem;}}
+@media (prefers-reduced-motion:reduce){.auth-step{animation:none;}.auth-icon-ring{animation:none;}.auth-icon-ring.spin .material-symbols-outlined{animation:none;}}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-high);border:1px solid var(--outline-variant);border-radius:var(--radius);padding:12px 20px;font-size:13px;opacity:0;pointer-events:none;transition:all .25s ease;z-index:300;max-width:90vw;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .toast.err{border-color:rgba(255,107,107,0.35);color:var(--error);}
 .skel{background:linear-gradient(90deg,var(--surface-low) 25%,var(--surface-high) 37%,var(--surface-low) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px;}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
-.reveal{opacity:0;transform:translateY(24px);transition:opacity .6s var(--ease-out-expo),transform .6s var(--ease-out-expo);}
-.reveal.in{opacity:1;transform:translateY(0);}
-@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none;}}
+.reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
+.reveal.in{opacity:1;filter:blur(0);transform:translateY(0) scale(1);}
+.magnetic{transition:transform .25s var(--ease-out-expo);}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;filter:none;transform:none;transition:none;}}
 
 /* ---------- help widget ---------- */
-#help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(94,106,210,.5),0 6px 24px rgba(94,106,210,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
+#help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(92,148,120,.5),0 6px 24px rgba(92,148,120,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
 #help-fab:active{transform:scale(.96);}
 #help-fab:hover{background:var(--primary-bright);}
 #help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
 #help-panel.open{display:flex;}
+.cookie-banner{position:fixed;left:22px;right:22px;bottom:22px;max-width:520px;background:var(--surface-lowest);backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:200;display:none;flex-direction:column;gap:12px;}
+.cookie-banner.show{display:flex;}
+.cookie-banner p{font-size:12.5px;line-height:1.6;color:var(--on-surface-variant);}
+.cookie-banner .link{color:var(--primary);text-decoration:underline;}
+.cookie-actions{display:flex;gap:8px;justify-content:flex-end;}
+.btn-sm{padding:7px 14px;font-size:12.5px;border-radius:var(--radius);border:1px solid var(--outline-variant);}
+@media (max-width:520px){.cookie-banner{left:12px;right:12px;bottom:12px;}}
 .help-head{padding:14px 16px;border-bottom:1px solid var(--outline-variant);display:flex;justify-content:space-between;align-items:center;}
 .help-head h4{font-size:13.5px;}
 .help-scroll{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}
@@ -362,13 +503,21 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
   <div class="blob blob-1"></div>
   <div class="blob blob-2"></div>
   <div class="blob blob-3"></div>
-  <div class="bg-grid"></div>
+  <canvas class="bg-dots" id="bg-dots"></canvas>
   <div class="bg-noise"></div>
 </div>
 
 <div id="root"></div>
 <div class="overlay" id="modal-root"></div>
 <div class="toast" id="toast"></div>
+
+<div id="cookie-banner" class="cookie-banner" role="dialog" aria-label="Cookie notice">
+  <p>We use essential cookies to keep you signed in, and a couple of optional ones to understand usage. See our <a href="#/privacy" class="link">Privacy Policy</a>.</p>
+  <div class="cookie-actions">
+    <button class="btn-ghost btn-sm" onclick="setCookieConsent('essential')">Essential only</button>
+    <button class="btn-primary btn-sm" onclick="setCookieConsent('all')">Accept all</button>
+  </div>
+</div>
 
 <button id="help-fab" title="Help" onclick="toggleHelpWidget()"><span class="material-symbols-outlined">chat_bubble</span></button>
 <div id="help-panel">
@@ -385,17 +534,81 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
    SOURCEVENTURE — core constants, state, utils, storage, APIs
    ============================================================ */
 const API_BASE = window.SOURCEVENTURE_API_BASE || "http://localhost:8000";
-const DAILY_CAP = 25;
-const DIRECTORY_THRESHOLD = 20;
+// First Drop (2026-09-02): free cap is 10/rolling-24h (was 25); Pro is a
+// 300/24h soft ceiling — see backend main.py's consume_coach_allowance for
+// the real, server-enforced version of this same number. currentDailyCap()
+// exists so every UI spot that used to read the flat DAILY_CAP constant
+// now reflects the signed-in user's actual plan.
+const FREE_DAILY_CAP = 10;
+const PRO_DAILY_CAP = 300;
+function currentDailyCap(){
+  return (STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? PRO_DAILY_CAP : FREE_DAILY_CAP;
+}
+const DIRECTORY_THRESHOLD = 30;
+const USER_THRESHOLD = 20;
 
 let STATE = { me:null, auth:null };
 
 function $(id){ return document.getElementById(id); }
 function nav(hash){ window.location.hash = hash; }
+// Real uploaded photo (base64 data URL, backend/main.py's avatar_data_url)
+// or an initials-in-gradient-circle fallback — never a fake stock avatar.
+function avatarInitials(name){
+  var parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return "?";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+function avatarHtml(user, size){
+  size = size || 40;
+  var style = "width:" + size + "px;height:" + size + "px;font-size:" + Math.round(size * 0.4) + "px;";
+  if(user && user.avatarUrl){
+    return '<img class="avatar-circle" style="' + style + '" src="' + escapeHtml(user.avatarUrl) + '" alt="" />';
+  }
+  return '<div class="avatar-circle" style="' + style + '">' + escapeHtml(avatarInitials(user && user.name)) + '</div>';
+}
 function escapeHtml(s){
   return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
   });
+}
+// Wraps each word in its own span with a staggered animation-delay, for a
+// word-by-word blur-in effect on load (hero title). Words stay wrapped in
+// nowrap spans, spaces between them are plain text nodes, so line-wrapping
+// still happens naturally at word boundaries.
+function blurWords(text){
+  return escapeHtml(text).split(" ").map(function(w, i){
+    return '<span class="word-blur" style="animation-delay:' + (i * 0.09).toFixed(2) + 's">' + w + '</span>';
+  }).join(" ");
+}
+
+// Hero "terminal" panel — closable, cycles to a different real snippet each
+// time (each one describing an actual product feature, not filler) sliding
+// in from the right with a slight spring overshoot.
+var HERO_SNIPPETS = [
+  { file: "coach_session.py", code: '<span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Coach\n\n<span class="tok-fn">coach</span> = Coach(\n    mode=<span class="tok-str">"editorial"</span>,\n    repo=<span class="tok-str">"you/your-project"</span>,\n)\n\n<span class="tok-cm"># grounded in your real README + commits</span>\n<span class="tok-fn">coach</span>.analyze_commit(hash)' },
+  { file: "rating_council.py", code: '<span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Council\n\n<span class="tok-fn">council</span> = Council(judges=[\n    <span class="tok-str">"vc"</span>, <span class="tok-str">"technical"</span>, <span class="tok-str">"growth"</span>,\n])\n\n<span class="tok-cm"># median per dimension, not mean —</span>\n<span class="tok-cm"># one outlier judge can\'t swing it</span>\n<span class="tok-fn">council</span>.rate(project)' },
+  { file: "publish.py", code: '<span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Project\n\n<span class="tok-fn">project</span> = Project(\n    repo=<span class="tok-str">"you/your-project"</span>,\n    pitch=pitch_text,\n)\n\n<span class="tok-cm"># draft by default — you choose</span>\n<span class="tok-cm"># what investors ever see</span>\n<span class="tok-fn">project</span>.publish(visible_to=<span class="tok-str">"nobody"</span>)' },
+];
+var heroSnippetIndex = 0;
+function heroPanelInner(i){
+  var s = HERO_SNIPPETS[i % HERO_SNIPPETS.length];
+  return '<div class="cp-bar"><div class="dots">' +
+      '<span class="dot-red" onclick="cycleHeroPanel()" role="button" aria-label="Close" title="Close"><span class="dot-glyph">&times;</span></span>' +
+      '<span class="dot-yellow"></span><span class="dot-green"></span>' +
+    '</div>' + s.file + '</div>' +
+    '<pre>' + s.code + '</pre>';
+}
+function cycleHeroPanel(){
+  var panel = $("hero-code-panel");
+  if(!panel) return;
+  heroSnippetIndex = (heroSnippetIndex + 1) % HERO_SNIPPETS.length;
+  panel.classList.add("cp-leaving");
+  setTimeout(function(){
+    panel.innerHTML = heroPanelInner(heroSnippetIndex);
+    panel.classList.remove("cp-leaving");
+    panel.classList.remove("cp-entering"); void panel.offsetWidth; // restart animation
+    panel.classList.add("cp-entering");
+  }, 200);
 }
 function renderRichText(s){
   var t = escapeHtml(s == null ? "" : s);
@@ -449,6 +662,31 @@ function toggleTheme(){
     el.textContent = next === "light" ? "dark_mode" : "light_mode";
   });
 }
+/* ---------------- brand mark ----------------
+   Inline SVG rather than an image file: stays crisp at any size, inherits
+   the current text colour so it works in both themes with no second asset,
+   and adds no network request. Two offset chevron slabs forming an "S",
+   with the figure/person dot at the pivot. */
+// Brand mark — the real asset, generated from the supplied logo file: black
+// background made transparent, cropped to the mark's true bounds, and
+// squared so it never distorts. Two variants ship because the mark is white:
+// logo.png reads on the dark canvas, logo-light.png recolours the white
+// slabs to the light theme's ink while keeping the teal dot untouched. Both
+// are emitted every time and CSS shows whichever matches the active theme,
+// so toggling themes needs no JS and no re-render.
+// `size` is the mark's HEIGHT; width follows its natural 3:4 proportions.
+// (Forcing a square here is what made it look undersized before — the file
+// was padded to a square, so a nominal 15px box held an ~11px mark.)
+function logoMarkHtml(size){
+  var s = size || 22;
+  return '<img class="sv-mark sv-mark-dark" src="assets/logo.png" height="' + s + '" alt="" />' +
+         '<img class="sv-mark sv-mark-light" src="assets/logo-light.png" height="' + s + '" alt="" />';
+}
+function brandHtml(href){
+  var inner = '<span class="sv-brand">' + logoMarkHtml(19) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
+}
+
 function themeToggleHtml(){
   var icon = currentTheme() === "light" ? "dark_mode" : "light_mode";
   return '<button class="tb-icon theme-toggle" title="Toggle theme" onclick="toggleTheme()"><span class="material-symbols-outlined">' + icon + '</span></button>';
@@ -505,59 +743,270 @@ async function saveMe(patch){
   lsSetJSON("me", STATE.me);
 }
 
-function openAuthModal(mode){
-  var isSignup = mode === "signup";
-  openModal(
-    '<h3>' + (isSignup ? "Create your account" : "Sign in") + '</h3>' +
-    '<p class="modal-sub">' + (isSignup ? "Free — publish projects and talk to your coach." : "Welcome back.") + '</p>' +
-    '<div class="form-error" id="auth-error"></div>' +
-    (isSignup ? '<div class="field"><label>Name</label><input type="text" id="auth-name" /></div>' : "") +
-    '<div class="field"><label>Email</label><input type="email" id="auth-email" /></div>' +
-    '<div class="field"><label>Password</label><input type="password" id="auth-password" /></div>' +
-    '<div class="modal-actions"><button class="btn btn-primary btn-block" id="auth-submit" onclick="' + (isSignup ? "submitSignup()" : "submitLogin()") + '">' + (isSignup ? "Create account" : "Sign in") + '</button></div>' +
-    '<p class="muted" style="font-size:12px;margin-top:14px;text-align:center;">' + (isSignup ? "Already have an account? " : "New here? ") +
-      '<a href="#" onclick="event.preventDefault();openAuthModal(\'' + (isSignup ? "login" : "signup") + '\');" style="color:var(--primary);">' + (isSignup ? "Sign in" : "Create one") + '</a></p>'
-  );
+/* ---------------- ambient dot-reveal canvas (sitewide + auth pages) ---------------- */
+// A hand-rolled 2D-canvas stand-in for the WebGL/three.js shader background
+// the sign-in design was originally built around (dots fade in outward from
+// center, then idle-flicker, and now brighten near the cursor). One shared
+// preset (DOT_PRESET below) used everywhere — auth pages and the sitewide
+// #bg-fx layer render with identical parameters, so the whole app reads as
+// one consistent surface rather than "auth has an effect, the rest doesn't."
+// Zero new dependencies — this app is deliberately zero-build.
+var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.11, revealSpeed: 0.03, color: "92,148,120" };
+function startDotCanvas(canvas, opts){
+  opts = Object.assign({}, DOT_PRESET, opts || {});
+  var cell = opts.cell, dot = opts.dot, maxAlpha = opts.maxAlpha, color = opts.color, revealSpeed = opts.revealSpeed;
+  var ctx = canvas.getContext("2d");
+  var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  var start = performance.now();
+  var raf, w, h;
+  var mouseX = -9999, mouseY = -9999; // canvas-local CSS px; off-screen until first move
+  var hoverRadius = 130, hoverBoost = 2.2;
+  function resize(){
+    w = canvas.clientWidth; h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function onMove(e){
+    var r = canvas.getBoundingClientRect();
+    mouseX = e.clientX - r.left; mouseY = e.clientY - r.top;
+  }
+  function onLeave(){ mouseX = -9999; mouseY = -9999; }
+  resize();
+  window.addEventListener("resize", resize);
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseleave", onLeave);
+  function draw(now){
+    var t = (now - start) / 1000;
+    ctx.clearRect(0, 0, w, h);
+    // Light mode needs noticeably more alpha than dark to read at the same
+    // perceived strength — pale-on-white is inherently harder to see than
+    // pale-on-black. Checked live (not cached) so it responds instantly to
+    // the theme toggle.
+    var isLight = document.documentElement.getAttribute("data-theme") === "light";
+    var themeAlpha = maxAlpha * (isLight ? 1.7 : 1);
+    // Slow scroll-parallax: the grid drifts with scroll at a fraction of
+    // page speed (depth cue), wrapped by cell size so it tiles seamlessly
+    // forever instead of running out of drawn area.
+    var scrollOffset = (window.scrollY || 0) * 0.12;
+    var cols = Math.ceil(w / cell), rows = Math.ceil(h / cell) + 1;
+    var cx = cols / 2, cy = rows / 2;
+    for(var y = 0; y < rows; y++){
+      for(var x = 0; x < cols; x++){
+        var px = x * cell + cell / 2;
+        var py = ((y * cell + cell / 2 + scrollOffset) % (rows * cell) + rows * cell) % (rows * cell);
+        var d = Math.hypot(x - cx, y - cy);
+        var seed = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+        seed -= Math.floor(seed);
+        var age = t - (d * revealSpeed + seed * 1.3);
+        if(age <= 0) continue;
+        var flicker = 0.55 + 0.45 * Math.sin(t * 0.5 + seed * 10);
+        var alpha = Math.min(1, age * 2) * flicker * themeAlpha;
+        var r = dot;
+        var md = Math.hypot(px - mouseX, py - mouseY);
+        if(md < hoverRadius){
+          var proximity = 1 - md / hoverRadius;
+          alpha = Math.min(1, alpha + proximity * hoverBoost * themeAlpha);
+          r = dot + proximity * 2.2;
+        }
+        ctx.fillStyle = "rgba(" + color + "," + alpha.toFixed(3) + ")";
+        // Slightly rounded squares, not circles — reads as "pixels", not dots.
+        var s = r * 1.7;
+        if(ctx.roundRect){
+          ctx.beginPath();
+          ctx.roundRect(px - s / 2, py - s / 2, s, s, Math.max(1, s * 0.25));
+          ctx.fill();
+        } else {
+          ctx.fillRect(px - s / 2, py - s / 2, s, s);
+        }
+      }
+    }
+    raf = requestAnimationFrame(draw);
+  }
+  raf = requestAnimationFrame(draw);
+  return function stop(){
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize", resize);
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseleave", onLeave);
+  };
 }
-async function submitSignup(){
-  var name = $("auth-name").value.trim(), email = $("auth-email").value.trim(), password = $("auth-password").value;
-  var err = $("auth-error");
-  if(!name || !email || !password){ err.textContent = "Fill in every field."; err.classList.add("show"); return; }
-  if(password.length < 8){ err.textContent = "Password must be at least 8 characters."; err.classList.add("show"); return; }
-  var btn = $("auth-submit"); btn.disabled = true; btn.textContent = "Creating…";
+// Sitewide layer: started once at boot (see bottom of file), never stopped —
+// #bg-fx persists across every route in this SPA, so there's no per-route
+// mount/unmount to manage. Same DOT_PRESET as the auth pages — one visual
+// language for the whole app.
+function startSitewideDots(){
+  var c = $("bg-dots");
+  if(c) startDotCanvas(c);
+}
+
+var __authCanvasStop = null;
+function authTopHtml(){
+  return '<div class="auth-top"><a href="#/" class="auth-brand">SourceVenture</a>' + themeToggleHtml() + '</div>';
+}
+
+var GOOGLE_ERROR_MESSAGES = {
+  not_configured: "Google sign-in isn't set up yet — use email instead.",
+  denied: "Google sign-in was cancelled.",
+  state_mismatch: "That Google sign-in link expired — try again.",
+  provider_error: "Google couldn't be reached — try again in a moment.",
+  incomplete_profile: "Your Google account didn't share an email — use email instead.",
+  token_exchange_failed: "Google sign-in failed — try again.",
+};
+function googleAuthErrorFromHash(){
+  var i = window.location.hash.indexOf("?");
+  if(i === -1) return null;
+  var params = new URLSearchParams(window.location.hash.slice(i + 1));
+  var code = params.get("google_error");
+  return code ? (GOOGLE_ERROR_MESSAGES[code] || "Google sign-in failed — use email instead.") : null;
+}
+function startGoogleAuth(){ window.location.href = API_BASE + "/api/auth/google/start"; }
+function renderAuthPage(root, mode){
+  var isSignup = mode === "signup";
+  var googleErr = googleAuthErrorFromHash();
+  root.innerHTML =
+    '<div class="auth-shell"><canvas class="auth-canvas" id="auth-canvas"></canvas><div class="auth-vignette"></div>' +
+    authTopHtml() +
+    '<div class="auth-main"><div class="auth-card auth-step" id="auth-card">' +
+      '<h1>' + (isSignup ? "Start building" : "Welcome back") + '</h1>' +
+      '<p class="auth-sub">' + (isSignup ? "Free — publish projects and talk to your coach." : "Sign in to keep going.") + '</p>' +
+      (googleErr ? '<p class="auth-error" style="display:block;">' + escapeHtml(googleErr) + '</p>' : "") +
+      '<button type="button" class="btn btn-ghost btn-block auth-google-btn" onclick="startGoogleAuth()">' +
+        '<svg width="16" height="16" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.61z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.19l-2.92-2.26c-.81.54-1.85.87-3.04.87-2.34 0-4.32-1.58-5.03-3.7H.9v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.9A9 9 0 0 0 0 9c0 1.45.35 2.83.9 4.05l3.07-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.95l3.07 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>' +
+        (isSignup ? "Sign up with Google" : "Sign in with Google") +
+      '</button>' +
+      '<div class="auth-divider"><span>or</span></div>' +
+      '<form onsubmit="event.preventDefault();submitAuthForm(\'' + mode + '\');">' +
+        (isSignup ? '<div class="auth-field"><input type="text" id="auth-name" placeholder="Your name" autocomplete="name" /></div>' : "") +
+        '<div class="auth-field"><input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" /></div>' +
+        '<div class="auth-field auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="' + (isSignup ? "new-password" : "current-password") + '" />' +
+          '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="' + (isSignup ? "Create account" : "Sign in") + '"><span class="material-symbols-outlined">arrow_forward</span></button>' +
+        '</div>' +
+      '</form>' +
+      '<p class="auth-error" id="auth-error"></p>' +
+      '<p class="auth-switch">' + (isSignup ? "Already have an account? " : "New here? ") +
+        '<a href="#" onclick="event.preventDefault();nav(\'' + (isSignup ? "#/signin" : "#/signup") + '\');">' + (isSignup ? "Sign in" : "Create one") + '</a></p>' +
+    '</div></div></div>';
+  if(__authCanvasStop) __authCanvasStop();
+  __authCanvasStop = startDotCanvas($("auth-canvas"));
+  setTimeout(function(){ var f = $("auth-name") || $("auth-email"); if(f) f.focus(); }, 350);
+}
+
+function renderAuthCheckEmail(email){
+  var card = $("auth-card");
+  if(!card) return;
+  card.className = "auth-card auth-step";
+  card.innerHTML =
+    '<div class="auth-icon-ring"><span class="material-symbols-outlined">mark_email_read</span></div>' +
+    '<h1>Check your email</h1>' +
+    '<p class="auth-sub">We sent a verification link to<br/><strong>' + escapeHtml(email) + '</strong></p>' +
+    '<button class="btn btn-primary btn-block" onclick="nav(\'#/dashboard\')">Continue to dashboard</button>' +
+    '<p class="auth-switch">Didn\'t get it? <button class="auth-resend" id="auth-resend-btn" onclick="resendVerificationEmail(this)">Resend email</button></p>';
+}
+
+async function resendVerificationEmail(btn){
+  btn.disabled = true; var original = btn.textContent; btn.textContent = "Sending…";
   try{
-    var res = await fetch(API_BASE + "/api/auth/signup", { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ name:name, email:email, password:password }) });
+    var res = await fetch(API_BASE + "/api/auth/resend-verification", { method:"POST", credentials:"include", headers: csrfHeaders() });
     var data = await res.json();
-    if(!res.ok) throw new Error(data.detail || "Could not create account");
-    setAuth(data.user);
-    closeModal();
-    showToast("Welcome, " + data.user.name + ".");
-    window.location.hash = "#/dashboard";
-    router();
+    if(!res.ok) throw new Error(data.detail || "Could not resend email");
+    btn.textContent = data.alreadyVerified ? "Already verified" : "Sent — check your inbox";
+    if(!data.alreadyVerified){
+      setTimeout(function(){ btn.disabled = false; btn.textContent = original; }, 30000);
+    }
   }catch(e){
-    btn.disabled = false; btn.textContent = "Create account";
-    err.textContent = e.message; err.classList.add("show");
+    btn.disabled = false; btn.textContent = original;
+    showToast(e.message, true);
   }
 }
-async function submitLogin(){
+
+async function submitAuthForm(mode){
+  var isSignup = mode === "signup";
+  var name = isSignup ? $("auth-name").value.trim() : null;
   var email = $("auth-email").value.trim(), password = $("auth-password").value;
   var err = $("auth-error");
-  if(!email || !password){ err.textContent = "Fill in every field."; err.classList.add("show"); return; }
-  var btn = $("auth-submit"); btn.disabled = true; btn.textContent = "Signing in…";
+  err.textContent = "";
+  if((isSignup && !name) || !email || !password){ err.textContent = "Fill in every field."; return; }
+  if(isSignup && password.length < 8){ err.textContent = "Password must be at least 8 characters."; return; }
+  var btn = $("auth-submit"); btn.disabled = true;
   try{
-    var res = await fetch(API_BASE + "/api/auth/login", { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email:email, password:password }) });
+    var url = API_BASE + (isSignup ? "/api/auth/signup" : "/api/auth/login");
+    var refCode = null;
+    if(isSignup){
+      var qIdx = window.location.hash.indexOf("?");
+      if(qIdx !== -1) refCode = new URLSearchParams(window.location.hash.slice(qIdx+1)).get("ref");
+    }
+    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined } : { email:email, password:password };
+    var res = await fetch(url, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
     var data = await res.json();
-    if(!res.ok) throw new Error(data.detail || "Invalid email or password");
+    if(!res.ok) throw new Error(data.detail || (isSignup ? "Could not create account" : "Invalid email or password"));
     setAuth(data.user);
-    closeModal();
-    showToast("Welcome back, " + data.user.name + ".");
-    window.location.hash = "#/dashboard";
-    router();
+    if(isSignup){
+      track("signup_completed");
+      renderAuthCheckEmail(data.user.email);
+    } else {
+      showToast("Welcome back, " + data.user.name + ".");
+      window.location.hash = "#/dashboard";
+      router();
+    }
   }catch(e){
-    btn.disabled = false; btn.textContent = "Sign in";
-    err.textContent = e.message; err.classList.add("show");
+    btn.disabled = false;
+    err.textContent = e.message;
   }
 }
+
+async function renderVerifyPage(root, token){
+  root.innerHTML =
+    '<div class="auth-shell"><canvas class="auth-canvas" id="auth-canvas"></canvas><div class="auth-vignette"></div>' +
+    authTopHtml() +
+    '<div class="auth-main"><div class="auth-card auth-step" id="auth-card">' +
+      '<div class="auth-icon-ring spin"><span class="material-symbols-outlined">progress_activity</span></div>' +
+      '<h1>Verifying…</h1><p class="auth-sub">One moment.</p>' +
+    '</div></div></div>';
+  if(__authCanvasStop) __authCanvasStop();
+  __authCanvasStop = startDotCanvas($("auth-canvas"));
+  var card = $("auth-card");
+  try{
+    var res = await fetch(API_BASE + "/api/auth/verify/" + encodeURIComponent(token), { method:"GET" });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Invalid or already-used verification link");
+    if(STATE.auth && STATE.auth.user) STATE.auth.user.emailVerified = true;
+    card.innerHTML =
+      '<div class="auth-icon-ring"><span class="material-symbols-outlined">check_circle</span></div>' +
+      '<h1>Email verified</h1><p class="auth-sub">You\'re all set.</p>' +
+      '<button class="btn btn-primary btn-block" onclick="nav(\'' + (isLoggedIn() ? "#/dashboard" : "#/signin") + '\')">' + (isLoggedIn() ? "Continue to dashboard" : "Sign in") + '</button>';
+  }catch(e){
+    card.innerHTML =
+      '<div class="auth-icon-ring err"><span class="material-symbols-outlined">error</span></div>' +
+      '<h1>Link expired</h1><p class="auth-sub">' + escapeHtml(e.message) + '</p>' +
+      '<button class="btn btn-primary btn-block" onclick="nav(\'' + (isLoggedIn() ? "#/settings" : "#/signin") + '\')">' + (isLoggedIn() ? "Go to account settings" : "Sign in") + '</button>';
+  }
+}
+// 2026-08-25: real content describing what this system actually does and
+// stores — not boilerplate copied from elsewhere. Keep in sync with
+// backend/main.py if the data model changes (auth, sessions, projects,
+// investor applications, coach chat).
+function privacyHtml(){
+  return '<h1>Privacy Policy</h1><p class="legal-updated">Last updated 25 August 2026</p>' +
+    '<h2>What we collect</h2><p>An account needs an email address, a display name, and a password (stored as a salted PBKDF2-HMAC-SHA256 hash — never the plain password, never logged). If you publish a project, we store what you write: your pitch, a link to your public GitHub repository, and any investor-facing summary you generate. If you talk to the AI coach, that conversation is stored so the coach has context across a session.</p>' +
+    '<h2>How sign-in works</h2><p>Logging in sets an httpOnly session cookie — our JavaScript never reads the token itself, which limits what an XSS bug could do. A separate, non-secret CSRF cookie is echoed back as a header on every request that changes data, as defense in depth.</p>' +
+    '<h2>The AI coach</h2><p>When you use the coach, your pitch text and the public contents of the GitHub repository you linked (description, README, file structure) are sent to our AI provider to generate a response. We don\'t send your password, email, or other users\' data.</p>' +
+    '<h2>What we don\'t do</h2><ul><li>We don\'t sell your data.</li><li>We don\'t run third-party analytics or ad trackers on this site today.</li><li>We don\'t share a draft project or its investor summary with anyone except you, unless you publish it — and the investor summary specifically is only ever shown to an investor account that\'s been individually approved.</li></ul>' +
+    '<h2>Investor directory</h2><p>If you apply for investor access, we store your name, email, firm, and application status. Access to the gated directory requires our manual approval — it isn\'t automatic.</p>' +
+    '<h2>Data deletion</h2><p>Ask us and we\'ll delete your account and associated data. This is a young, actively-developed product — if you want something specific removed, the fastest path is asking directly rather than waiting on a self-serve flow that doesn\'t exist yet.</p>' +
+    '<h2>Contact</h2><p>' + escapeHtml(sourceventureContactNote()) + '</p>';
+}
+function termsHtml(){
+  return '<h1>Terms of Service</h1><p class="legal-updated">Last updated 25 August 2026</p>' +
+    '<h2>What this is</h2><p>SourceVenture lets you publish a project, talk to a private AI coach grounded in your real repository, and optionally apply for a gated investor directory once enough projects exist. It\'s an early-stage, actively-developed product — expect rough edges.</p>' +
+    '<h2>Your account</h2><p>You\'re responsible for what you publish and for keeping your password to yourself. Don\'t share an account across people; each real user should have their own.</p>' +
+    '<h2>Your content</h2><p>You keep ownership of what you write here. By publishing a project you\'re allowing it to be shown publicly on the platform (and, for the AI coach, sent to our AI provider to generate responses). Draft projects are not public and are never shown to anyone but you.</p>' +
+    '<h2>The AI coach isn\'t advice</h2><p>Coach output is generated by an AI model reading your pitch and public repo content. It can be wrong. Treat it as a drafting aid, not investment, legal, or financial advice.</p>' +
+    '<h2>Free tier</h2><p>The free tier includes 25 coach messages per rolling 24 hours, enforced server-side. We may change limits or pricing as the product develops; we\'ll try to be upfront about it rather than silently changing behavior.</p>' +
+    '<h2>Fair use</h2><p>Don\'t use this to publish anything illegal, to impersonate someone else, or to abuse the coach/investor-application flow (e.g. scripted spam applications). We can suspend accounts that do.</p>' +
+    '<h2>No warranty</h2><p>Provided as-is, without warranty of any kind, while this is actively being built. We\'ll do our best to keep it reliable and to communicate honestly when something is broken rather than pretend it isn\'t.</p>' +
+    '<h2>Contact</h2><p>' + escapeHtml(sourceventureContactNote()) + '</p>';
+}
+function sourceventureContactNote(){ return "No dedicated support email is set up yet — for now, reach out through whoever gave you access to SourceVenture."; }
 async function doLogout(){
   try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include", headers: csrfHeaders() }); }catch(e){}
   clearAuth();
@@ -623,6 +1072,10 @@ function parseGithubUrl(url){
 }
 async function fetchRepoContext(owner, repo){
   var ctx = { owner:owner, repo:repo, description:null, language:null, stars:null, contributors:null, files:[], readme:null, ok:false };
+  // GitHub is optional — a project with no connected repo has null
+  // owner/repo, and there's nothing to fetch (skip the wasted, always-404
+  // calls to api.github.com/repos/null/null).
+  if(!owner || !repo) return ctx;
   try{
     var metaRes = await fetch("https://api.github.com/repos/" + owner + "/" + repo);
     if(metaRes.ok){
@@ -651,6 +1104,20 @@ async function fetchRepoContext(owner, repo){
   return ctx;
 }
 
+/* ---------------- analytics (first-party, no third-party tracker) ----------------
+   Fire-and-forget: a failed analytics call must never surface to the user
+   or block whatever they were actually doing. Event names are validated
+   server-side against an allowlist. */
+function track(name, projectId){
+  try{
+    fetch(API_BASE + "/api/analytics/event", {
+      method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name: name, projectId: projectId || null }),
+      keepalive: true
+    }).catch(function(){});
+  }catch(e){}
+}
+
 /* ---------------- Coach API (proxied through the Python backend) ---------------- */
 async function callClaude(messages, system, maxTokens){
   var res = await fetch(API_BASE + "/api/coach", {
@@ -658,6 +1125,17 @@ async function callClaude(messages, system, maxTokens){
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
   if(res.status === 503){ throw new Error("NOT_CONFIGURED"); }
+  if(res.status === 429){
+    // The backend is the real cap enforcer (10/24h free, 300/24h pro, plus
+    // any referral bonus messages) — this can fire even when the client's
+    // own local usage counter thought a bonus message was still available,
+    // since that counter doesn't track server-side bonus draws. Surface
+    // the server's own detail text rather than a generic error.
+    var body = null; try{ body = await res.json(); }catch(e){}
+    var err = new Error("RATE_LIMITED");
+    err.detail = (body && body.detail) || null;
+    throw err;
+  }
   if(!res.ok){ throw new Error("Request failed (" + res.status + ")"); }
   var data = await res.json();
   return data.text || "";
@@ -666,6 +1144,9 @@ function friendlyAiError(e){
   if(e && e.message === "NOT_CONFIGURED"){
     return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add GEMINI_API_KEY or ANTHROPIC_API_KEY in backend/.env. This isn't something you can fix by retrying.";
   }
+  if(e && e.message === "RATE_LIMITED"){
+    return e.detail || "Daily AI limit reached — try again after it resets.";
+  }
   return "Something went wrong reaching the AI. Try again in a moment.";
 }
 
@@ -673,7 +1154,7 @@ function friendlyAiError(e){
 async function rateProject(p, repoContext){
   var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rate", {
     method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
-    body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoContext || null })
+    body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoContext || null, problem: p.problem || null, team: p.team || null })
   });
   var data = await res.json();
   if(!res.ok) throw new Error(data.detail || "Could not generate a rating");
@@ -702,18 +1183,34 @@ async function myInvestorStatus(){
    ============================================================ */
 const ROUTES = [
   { test:/^#\/?$/, name:"landing" },
+  { test:/^#\/signin(?:\?.*)?$/, name:"signin" },
+  { test:/^#\/signup(?:\?.*)?$/, name:"signup" },
+  { test:/^#\/verify\/([^\/]+)$/, name:"verify" },
+  { test:/^#\/privacy$/, name:"privacy" },
+  { test:/^#\/terms$/, name:"terms" },
   { test:/^#\/dashboard$/, name:"dashboard" },
   { test:/^#\/projects$/, name:"projects" },
   { test:/^#\/new$/, name:"new" },
   { test:/^#\/project\/([^\/]+)$/, name:"project" },
   { test:/^#\/coach\/([^\/]+)$/, name:"coach" },
   { test:/^#\/summary\/([^\/]+)$/, name:"summary" },
+  { test:/^#\/plan\/([^\/]+)$/, name:"plan" },
   { test:/^#\/investors$/, name:"investors" },
   { test:/^#\/settings$/, name:"settings" },
-  { test:/^#\/settings\/([^\/]+)$/, name:"settings" }
+  // Allows an optional ?query (e.g. ?checkout=success from the Stripe
+  // redirect) after the tab name without it leaking into the captured
+  // param — [^\/?]+ stops at either a slash or a question mark.
+  { test:/^#\/settings\/([^\/?]+)(?:\?.*)?$/, name:"settings" },
+  { test:/^#\/admin$/, name:"admin" }
 ];
 
+// Bumped on every navigation. Render functions that await before touching
+// the DOM compare against it so a slow render from a page the user already
+// left can't write over the new one (or throw on elements it removed).
+var __renderToken = 0;
 async function router(){
+  var myToken = ++__renderToken;
+  if(__authCanvasStop){ __authCanvasStop(); __authCanvasStop = null; }
   var hash = window.location.hash || "#/";
   var matched = null, param = null;
   for(var i=0;i<ROUTES.length;i++){
@@ -722,6 +1219,7 @@ async function router(){
   }
   if(!matched) matched = { name:"landing" };
   window.scrollTo(0,0);
+  track("page_view", matched.name === "project" || matched.name === "coach" ? param : null);
 
   var root = $("root");
   if(matched.name === "landing"){
@@ -730,12 +1228,30 @@ async function router(){
     return;
   }
 
+  if(matched.name === "signin" || matched.name === "signup"){
+    if(isLoggedIn()){ window.location.hash = "#/dashboard"; return router(); }
+    try{ renderAuthPage(root, matched.name); }catch(e){ console.error(e); root.innerHTML = errorBlock(e); }
+    return;
+  }
+
+  if(matched.name === "verify"){
+    try{ await renderVerifyPage(root, param); }catch(e){ console.error(e); root.innerHTML = errorBlock(e); }
+    return;
+  }
+
+  if(matched.name === "privacy" || matched.name === "terms"){
+    root.innerHTML = '<div id="landing-nav"><div class="wrap"><a href="#/" class="tb-title">SourceVenture</a>' + themeToggleHtml() + '</div></div>' +
+      '<div class="legal-page">' + (matched.name === "privacy" ? privacyHtml() : termsHtml()) + '</div>' +
+      '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span class="foot-links"><a href="#" onclick="event.preventDefault();nav(\'#/privacy\');">Privacy</a><a href="#" onclick="event.preventDefault();nav(\'#/terms\');">Terms</a></span></div></footer>';
+    return;
+  }
+
   if(!isLoggedIn()){
-    root.innerHTML = '<div id="topbar"><div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a></div></div>' +
+    root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
       '<div class="canvas" style="padding-top:100px;text-align:center;">' +
         '<h1 class="page-title">Sign in required</h1>' +
         '<p class="page-sub" style="margin:0 auto 24px;">Create a free account or sign in to continue.</p>' +
-        '<div style="display:flex;gap:10px;justify-content:center;"><button class="btn btn-ghost" onclick="openAuthModal(\'login\')">Sign In</button><button class="btn btn-primary" onclick="openAuthModal(\'signup\')">Get Started</button></div>' +
+        '<div style="display:flex;gap:10px;justify-content:center;"><button class="btn btn-ghost" onclick="nav(\'#/signin\')">Sign In</button><button class="btn btn-primary" onclick="nav(\'#/signup\')">Get Started</button></div>' +
       '</div>';
     return;
   }
@@ -751,9 +1267,15 @@ async function router(){
     else if(matched.name === "project") await renderProjectDetail(main, param);
     else if(matched.name === "coach") await renderCoach(main, param);
     else if(matched.name === "summary") await renderSummary(main, param);
+    else if(matched.name === "plan") await renderBusinessPlan(main, param);
     else if(matched.name === "investors") await renderInvestors(main);
     else if(matched.name === "settings") await renderSettings(main, param || "account");
+    else if(matched.name === "admin") await renderAdmin(main);
   }catch(e){
+    // Only surface the failure if this render is still the current one —
+    // otherwise it belongs to a page the user has already navigated away
+    // from, and writing here would clobber the page they're now on.
+    if(myToken !== __renderToken) return;
     console.error(e);
     main.innerHTML = errorBlock(e);
   }
@@ -764,23 +1286,25 @@ function errorBlock(e){
 
 function appShellHtml(routeName){
   return '<div id="topbar">' +
-      '<div class="tb-left"><a href="#/" class="tb-title">SourceVenture</a><div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+      '<div class="tb-left">' + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
-        '<button class="tb-icon" title="Upgrade" onclick="nav(\'#/settings/billing\')"><span class="material-symbols-outlined">bolt</span></button>' +
         '<button class="tb-icon" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
       '</div>' +
     '</div>' +
     '<div class="app-layout">' +
       '<nav id="sidenav">' +
-        '<div class="sn-head"><div class="sn-logo">SV</div><div><h1>SourceVenture</h1><p class="mono">Venture Engineering</p></div></div>' +
+        '<a href="#/settings" class="sn-head sn-head-account">' + avatarHtml(STATE.auth && STATE.auth.user, 40) +
+          '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") + '</h1><p class="mono">' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.email) || "") + '</p></div></a>' +
         '<div class="sn-newbtn"><button class="btn btn-primary btn-block" onclick="nav(\'#/new\')"><span class="material-symbols-outlined" style="font-size:16px;">add</span>New Project</button></div>' +
         '<div class="sn-links">' +
           '<a data-r="dashboard" href="#/dashboard"><span class="material-symbols-outlined">dashboard</span>Overview</a>' +
           '<a data-r="projects" href="#/projects"><span class="material-symbols-outlined">folder</span>Projects</a>' +
           '<a data-r="investors" href="#/investors"><span class="material-symbols-outlined">handshake</span>Investors</a>' +
           '<a data-r="settings" href="#/settings"><span class="material-symbols-outlined">settings</span>Settings</a>' +
+          ((STATE.auth && STATE.auth.user && STATE.auth.user.isAdmin) ?
+            '<a data-r="admin" href="#/admin"><span class="material-symbols-outlined">shield_person</span>Admin</a>' : '') +
         '</div>' +
         '<div class="sn-foot">' +
           '<a href="#" onclick="event.preventDefault();showToast(\'Docs are not part of this preview.\');"><span class="material-symbols-outlined" style="font-size:18px;">menu_book</span>Documentation</a>' +
@@ -803,13 +1327,13 @@ async function renderLanding(root){
   var published = await loadAllPublishedProjects();
   root.innerHTML =
   '<nav id="landing-nav"><div class="wrap">' +
-    '<div class="tb-title">SourceVenture</div>' +
+    brandHtml(null) +
     '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
     '<div style="display:flex;gap:10px;align-items:center;">' +
       themeToggleHtml() +
       (isLoggedIn() ?
         '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
-        '<button class="btn btn-ghost btn-sm" onclick="openAuthModal(\'login\')">Sign In</button><button class="btn btn-primary btn-sm" onclick="openAuthModal(\'signup\')">Get Started</button>'
+        '<button class="btn btn-ghost btn-sm" onclick="nav(\'#/signin\')">Sign In</button><button class="btn btn-primary btn-sm magnetic" onclick="nav(\'#/signup\')">Get Started</button>'
       ) +
     '</div>' +
   '</div></nav>' +
@@ -817,17 +1341,15 @@ async function renderLanding(root){
   '<header class="hero"><div class="wrap hero-grid">' +
     '<div>' +
       '<div class="eyebrow">AI-native venture engineering</div>' +
-      '<h1>Think with something that understands the code.</h1>' +
+      '<h1>' + blurWords("Think with something that understands the code.") + '</h1>' +
       '<p class="lead">Publish your project, connect the real repository, and get a private AI coach grounded in your actual code and pitch — not a generic prompt. Investor access stays gated until the cohort is real.</p>' +
       '<div class="hero-actions">' +
-        '<button class="btn btn-primary" onclick="nav(\'#/new\')">Publish your project<span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></button>' +
+        '<button class="btn btn-primary magnetic" onclick="nav(\'#/new\')">Publish your project<span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></button>' +
         '<button class="btn btn-ghost" onclick="document.getElementById(\'how\').scrollIntoView()">See how it works</button>' +
       '</div>' +
       '<div class="mono muted" style="font-size:11.5px;">' + published.length + ' projects synced · coach powered by a private Python backend</div>' +
     '</div>' +
-    '<div class="code-panel"><div class="cp-bar"><div class="dots"><span></span><span></span><span></span></div>coach_session.py</div>' +
-      '<pre><span class="tok-kw">from</span> sourceventure <span class="tok-kw">import</span> Coach\n\n<span class="tok-fn">coach</span> = Coach(\n    mode=<span class="tok-str">"editorial"</span>,\n    repo=<span class="tok-str">"you/your-project"</span>,\n)\n\n<span class="tok-cm"># grounded in your real README + commits</span>\n<span class="tok-fn">coach</span>.analyze_commit(hash)</pre>' +
-    '</div>' +
+    '<div class="code-panel" id="hero-code-panel">' + heroPanelInner(0) + '</div>' +
   '</div></header>' +
 
   '<section class="landing-sec" id="how"><div class="wrap">' +
@@ -845,11 +1367,13 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="pricing-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free to start. One paid tier.</h2><p>25 coach messages per rolling 24h on the free tier, disclosed and enforced. Founder Pro removes the cap for $15/month.</p></div>' +
+    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan.</p></div>' +
     '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
-  '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span></div></footer>';
+  '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span>' +
+    '<span class="foot-links"><a href="#" onclick="event.preventDefault();nav(\'#/privacy\');">Privacy</a><a href="#" onclick="event.preventDefault();nav(\'#/terms\');">Terms</a></span>' +
+  '</div></footer>';
 }
 /* ============================================================
    DASHBOARD (Overview)
@@ -867,7 +1391,6 @@ async function renderDashboard(main){
     '<div class="stat-row">' +
       '<div class="card stat-card"><div class="lbl">Published</div><div class="val">' + published.length + '</div></div>' +
       '<div class="card stat-card"><div class="lbl">Drafts</div><div class="val">' + drafts.length + '</div></div>' +
-      '<div class="card stat-card"><div class="lbl">Plan</div><div class="val" style="font-size:18px;">' + (STATE.me.plan === "pro" ? "Founder Pro" : "Free") + '</div></div>' +
     '</div>' +
     (mine.length === 0 ?
       '<div class="empty-state"><h3>No projects yet</h3><p>Publish your first project to unlock the AI coach and investor visibility.</p><button class="btn btn-primary" style="margin-top:16px;" onclick="nav(\'#/new\')">New Project</button></div>' :
@@ -908,14 +1431,16 @@ async function renderNewProject(main){
   await ensureMe();
   main.innerHTML = '<div class="canvas">' +
     '<div class="eyebrow">New project</div><h1 class="page-title">Publish a project</h1>' +
-    '<p class="page-sub stack-lg">Free. Connects to a real public GitHub repo so your coach has real context from the start.</p>' +
+    '<p class="page-sub stack-lg">Free. A public GitHub repo gives your coach extra real-world context, but it\'s optional — the AI works from whatever you give it.</p>' +
     '<div class="card" style="padding:28px;">' +
       '<div class="form-error" id="np-error"></div>' +
       '<div class="field"><label>Project name <span class="req">*</span></label><input type="text" id="np-name" placeholder="neural-mesh-core" /></div>' +
       '<div class="field"><label>One-line tagline <span class="req">*</span></label><input type="text" id="np-tagline" placeholder="What it does, in one sentence" /></div>' +
       '<div class="field"><label>Category</label><input type="text" id="np-category" placeholder="e.g. DevTools, AI / ML, DeFi Infrastructure — optional, we’ll infer from the repo if left blank" /></div>' +
       '<div class="field"><label>Full pitch <span class="req">*</span></label><textarea id="np-pitch" rows="5" placeholder="What you’re building, why it matters, what stage you’re at. This is what your coach reads first."></textarea></div>' +
-      '<div class="field"><label>GitHub repo URL <span class="req">*</span></label><input type="text" id="np-repo" placeholder="https://github.com/owner/repo" /><div class="hint">We fetch the public description, README, top-level files and contributor count.</div></div>' +
+      '<div class="field"><label>Problem you\'re solving</label><textarea id="np-problem" rows="3" placeholder="Optional, but it sharpens every piece of AI feedback — who has this problem, how big is it, why does it matter now."></textarea></div>' +
+      '<div class="field"><label>Team</label><textarea id="np-team" rows="2" placeholder="Optional — who\'s building this and why they\'re the right people for it."></textarea></div>' +
+      '<div class="field"><label>GitHub repo URL <span class="muted" style="font-weight:400;">(optional)</span></label><input type="text" id="np-repo" placeholder="https://github.com/owner/repo" /><div class="hint">If given, we fetch the public description, README, top-level files and contributor count as extra evidence.</div></div>' +
       '<button class="btn btn-primary btn-block" id="np-submit" onclick="submitNewProject()">Publish & open my coach</button>' +
     '</div>' +
   '</div>';
@@ -926,16 +1451,18 @@ async function submitNewProject(){
   var tagline = $("np-tagline").value.trim();
   var category = $("np-category").value.trim();
   var pitch = $("np-pitch").value.trim();
+  var problem = $("np-problem").value.trim();
+  var team = $("np-team").value.trim();
   var repoUrl = $("np-repo").value.trim();
   var err = $("np-error");
 
-  if(!name || !tagline || !pitch || !repoUrl){
+  if(!name || !tagline || !pitch){
     err.textContent = "Fill in every required field — your coach needs all of it.";
     err.classList.add("show");
     return;
   }
-  var parsed = parseGithubUrl(repoUrl);
-  if(!parsed){
+  var parsed = repoUrl ? parseGithubUrl(repoUrl) : null;
+  if(repoUrl && !parsed){
     err.textContent = "That doesn't look like a github.com repo URL, e.g. https://github.com/owner/repo";
     err.classList.add("show");
     return;
@@ -947,27 +1474,31 @@ async function submitNewProject(){
   var project = {
     id: uid("proj"), founder: STATE.auth.user.name,
     name: name, tagline: tagline, category: category, pitch: pitch, description: tagline,
-    repoUrl: repoUrl, owner: parsed.owner, repo: parsed.repo,
+    problem: problem || null, team: team || null,
+    repoUrl: parsed ? repoUrl : null, owner: parsed ? parsed.owner : null, repo: parsed ? parsed.repo : null,
     language:null, stars:null, contributors:null, files:[], readmeOk:false,
     status: "published", createdAt: Date.now(), publishedAt: Date.now(), repoSyncedAt: null,
-    investorSummary: null, investorSummaryApprovedAt: null, signal: null
+    investorSummary: null, investorSummaryDraft: null, investorSummaryApprovedAt: null, signal: null
   };
 
-  try{
-    var ctx = await fetchRepoContext(parsed.owner, parsed.repo);
-    project.language = ctx.language;
-    project.stars = ctx.stars;
-    project.contributors = ctx.contributors;
-    project.files = ctx.files;
-    project.readmeOk = !!ctx.readme;
-    project.repoSyncedAt = Date.now();
-    project._repoCtxCache = ctx;
-  }catch(e){}
+  if(parsed){
+    try{
+      var ctx = await fetchRepoContext(parsed.owner, parsed.repo);
+      project.language = ctx.language;
+      project.stars = ctx.stars;
+      project.contributors = ctx.contributors;
+      project.files = ctx.files;
+      project.readmeOk = !!ctx.readme;
+      project.repoSyncedAt = Date.now();
+      project._repoCtxCache = ctx;
+    }catch(e){}
+  }
 
   if(!project.category){ project.category = project.language || "Uncategorized"; }
 
   try{
     await saveProject(project);
+    track("project_published", project.id);
     showToast(project.name + " is live.");
     nav("#/coach/" + project.id);
   }catch(e){
@@ -991,6 +1522,7 @@ async function renderProjectDetail(main, id){
       '<div><h1 class="page-title">' + escapeHtml(p.name) + '</h1><p class="page-sub">' + escapeHtml(p.tagline||"") + '</p></div>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="nav(\'#/coach/' + p.id + '\')">Open Coach</button><button class="btn btn-ghost btn-sm" onclick="nav(\'#/summary/' + p.id + '\')">Investor Summary</button></div>' +
     '</div>' +
+    (p.repo ?
     '<div class="card repo-card stack-lg" style="margin-top:24px;">' +
       '<div class="repo-top"><div><div class="mono muted" style="font-size:12px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</div><h3 style="margin-top:4px;">Repository</h3></div>' +
         '<span class="repo-badge">' + (p.readmeOk ? "Active Production" : "Sync incomplete") + '</span></div>' +
@@ -1005,14 +1537,18 @@ async function renderProjectDetail(main, id){
       '<div style="margin-top:18px;"><div class="mono muted" style="font-size:11px;text-transform:uppercase;margin-bottom:8px;">Repository structure</div>' +
         (p.files && p.files.length ? p.files.map(function(f){ return '<div class="file-row"><span class="fname"><span class="material-symbols-outlined" style="font-size:14px;">' + (f.type==="dir"?"folder":"description") + '</span>' + escapeHtml(f.name) + '</span></div>'; }).join("") : '<div class="muted" style="font-size:12.5px;">Could not read repository contents (private repo, rate limit, or network).</div>') +
       '</div>' +
-    '</div>' +
-    '<div class="card" style="padding:22px 24px;"><h3 style="font-size:15px;margin-bottom:10px;">Full pitch</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.pitch) + '</p></div>' +
+    '</div>'
+    : '<div class="card" style="padding:18px 22px;margin-top:24px;display:flex;align-items:center;gap:10px;"><span class="material-symbols-outlined muted">link_off</span><p class="muted" style="font-size:13px;margin:0;">No GitHub repo connected — the coach works from the pitch below. GitHub is optional.</p></div>'
+    ) +
+    '<div class="card" style="padding:22px 24px;margin-top:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Full pitch</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.pitch) + '</p></div>' +
+    (p.problem ? '<div class="card" style="padding:22px 24px;margin-top:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Problem</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.problem) + '</p></div>' : "") +
+    (p.team ? '<div class="card" style="padding:22px 24px;margin-top:16px;"><h3 style="font-size:15px;margin-bottom:10px;">Team</h3><p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(p.team) + '</p></div>' : "") +
   '</div>';
 }
 /* ============================================================
    AI COACH
    ============================================================ */
-let COACH = { project:null, messages:[], usage:[], repoCtx:null };
+let COACH = { project:null, messages:[], usage:[], repoCtx:null, rating:null };
 
 async function renderCoach(main, id){
   var p = await loadProject(id);
@@ -1039,14 +1575,21 @@ async function renderCoach(main, id){
       '</div>' +
       '<div class="coach-side">' +
         '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button></div>' +
-        '<div class="coach-side-block"><h4>Business rating</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
+        '<div class="coach-side-block"><h4>Source Score</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
+        (p.repo ?
         '<div class="coach-side-block"><h4>Project context</h4><div class="metric-row"><span>Repo</span><span class="mval mono" style="font-size:11px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</span></div>' +
           '<div class="metric-row"><span>Stars</span><span class="mval">' + (p.stars!=null?p.stars:"—") + '</span></div>' +
           '<div class="metric-row"><span>Contributors</span><span class="mval">' + (p.contributors!=null?p.contributors:"—") + '</span></div>' +
           '<div class="metric-row"><span>Language</span><span class="mval">' + (p.language||"—") + '</span></div>' +
+        '</div>'
+        : '<div class="coach-side-block"><h4>Project context</h4><p class="muted" style="font-size:12px;">No GitHub repo connected — coaching from the pitch alone.</p></div>') +
+        '<div class="coach-side-block"><h4>Investor summary</h4><p class="muted" style="font-size:12px;margin-bottom:10px;">' + (p.investorSummary ? "Approved for investors." : (p.investorSummaryDraft ? "Draft ready — not yet approved." : "Not generated yet.")) + '</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/summary/' + p.id + '\')">Open workspace</button></div>' +
+        '<div class="coach-side-block"><h4>Business plan</h4>' +
+          ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ?
+            '<p class="muted" style="font-size:12px;margin-bottom:10px;">AI-generated, grounded in this project\'s real context.</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/plan/' + p.id + '\')">Open business plan</button>'
+            : '<p class="muted" style="font-size:12px;margin-bottom:10px;">A Pro feature — a structured, AI-generated business plan built from this project\'s pitch, score and context.</p><button class="btn btn-ghost btn-sm btn-block" onclick="openUpgradeModal()">Upgrade to Pro</button>') +
         '</div>' +
-        '<div class="coach-side-block"><h4>Investor summary</h4><p class="muted" style="font-size:12px;margin-bottom:10px;">' + (p.investorSummary ? "Published to investors." : "Not generated yet.") + '</p><button class="btn btn-ghost btn-sm btn-block" onclick="nav(\'#/summary/' + p.id + '\')">Open workspace</button></div>' +
-        '<div class="coach-side-block"><h4>Plan</h4><p class="muted" style="font-size:12px;">' + (STATE.me.plan === "pro" ? "Founder Pro — unlimited." : DAILY_CAP + " messages / 24h free.") + '</p>' + (STATE.me.plan !== "pro" ? '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="nav(\'#/settings/billing\')">Upgrade</button>' : "") + '</div>' +
+        '<div class="coach-side-block"><h4>Message cap</h4><p class="muted" style="font-size:12px;">' + currentDailyCap() + ' messages / rolling 24h (' + ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? "Pro" : "Free") + ').</p></div>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -1087,20 +1630,21 @@ function activeUsageCount(){
 function renderCapNote(){
   var note = $("coach-cap");
   if(!note) return;
-  if(STATE.me.plan === "pro"){
-    note.textContent = "Founder Pro — unlimited coaching.";
-    $("coach-send").disabled = false;
-    return;
-  }
+  var cap = currentDailyCap();
+  var isPro = !!(STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro");
+  var bonus = (STATE.auth && STATE.auth.user && STATE.auth.user.referralBonusRemaining) || 0;
   var used = activeUsageCount();
-  var remaining = Math.max(0, DAILY_CAP - used);
-  if(remaining === 0){
+  var remaining = Math.max(0, cap - used);
+  if(remaining === 0 && bonus === 0){
     var oldest = Math.min.apply(null, COACH.usage);
     var resetsAt = new Date(oldest + 24*60*60*1000);
-    note.textContent = "Free daily cap reached (" + DAILY_CAP + "/" + DAILY_CAP + "). Resets " + resetsAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + " — or upgrade to Founder Pro.";
+    note.textContent = "Daily cap reached (" + cap + "/" + cap + "). Resets " + resetsAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + ".";
     $("coach-send").disabled = true;
+  } else if(remaining === 0 && bonus > 0){
+    note.textContent = "Daily cap reached — using referral bonus messages (" + bonus + " left).";
+    $("coach-send").disabled = false;
   } else {
-    note.textContent = remaining + " of " + DAILY_CAP + " coach messages left today (free tier).";
+    note.textContent = remaining + " of " + cap + " coach messages left today (" + (isPro ? "Pro" : "free tier") + ").";
     $("coach-send").disabled = false;
   }
 }
@@ -1126,12 +1670,13 @@ function scoreBarHtml(label, val){
 }
 function ratingBlockHtml(r, p){
   if(!r){
-    return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Rate my business</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge council (VC, technical due-diligence, growth analyst) — separate from the free-text idea evaluation above.</p>';
+    return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Get my Source Score</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge AI council (VC, technical due-diligence, growth analyst), evaluating actual startup evidence — never likes, views or popularity.</p>';
   }
   var improvements = (r.improvements||[]).map(function(imp){ return '<li style="margin-bottom:4px;">' + escapeHtml(imp) + '</li>'; }).join("");
-  return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">' +
-      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '</div>' +
-      '<div class="muted" style="font-size:11px;">overall / 100</div></div>' +
+  return '<div class="muted mono" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Source Score</div>' +
+    '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">' +
+      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '<span style="font-size:15px;">/100</span></div>' +
+      '<div class="muted" style="font-size:13px;">' + r.overall + '%</div></div>' +
     '<p class="muted mono" style="font-size:10px;margin-bottom:12px;">' + (r.judges||3) + '-judge council · median score</p>' +
     scoreBarHtml("Problem &amp; market", r.scores.problem_market) +
     scoreBarHtml("Differentiation", r.scores.differentiation) +
@@ -1148,6 +1693,7 @@ async function loadAndRenderRating(p){
   try{
     var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/rating");
     var data = await res.json();
+    COACH.rating = data.rating || null;
     block.innerHTML = ratingBlockHtml(data.rating, p);
   }catch(e){
     block.innerHTML = ratingBlockHtml(null, p);
@@ -1160,15 +1706,19 @@ async function runRating(id){
   try{
     if(!COACH.repoCtx && COACH.project){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
     var repoText = COACH.repoCtx ? (COACH.repoCtx.readme || COACH.repoCtx.description || "") : "";
+    track("rating_requested", id);
     var data = await rateProject(COACH.project, repoText);
+    COACH.rating = data;
     block.innerHTML = ratingBlockHtml(data, COACH.project);
   }catch(e){
     block.innerHTML = '<p class="muted" style="font-size:12px;">' + escapeHtml(e.message) + '</p><button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="runRating(' + "'" + id + "'" + ')">Try again</button>';
   }
 }
 
-function coachSystemPrompt(p, ctx){
-  var repoBlock = "No public repo data could be fetched for this session — coach on the pitch alone.";
+function coachSystemPrompt(p, ctx, rating){
+  var repoBlock = p.repo
+    ? "No public repo data could be fetched for this session — coach on the pitch alone."
+    : "No GitHub repo is connected to this project (optional) — coach on the pitch, problem and team details alone.";
   if(ctx && (ctx.description || ctx.readme)){
     repoBlock =
 '<repo_data owner="' + p.owner + '" repo="' + p.repo + '">\n' +
@@ -1181,28 +1731,51 @@ function coachSystemPrompt(p, ctx){
 'README (truncated):\n' + (ctx.readme || "(none found)") + '\n' +
 '</repo_data>';
   }
+  // The council rating already exists server-side — feeding it to the coach
+  // means the chat and the scorecard stop contradicting each other, and the
+  // coach can work from what the judges actually flagged instead of
+  // re-deriving its own opinion from scratch every session.
+  var ratingBlock = "";
+  if(rating && rating.scores){
+    ratingBlock = "\n\n<council_rating>\nA 3-judge council (VC, technical due-diligence, growth analyst) already scored this project. Treat these as your colleagues' assessments — build on them, don't silently contradict them without saying why.\n" +
+      "overall: " + rating.overall + "/100\n" +
+      "problem & market: " + rating.scores.problem_market + "\n" +
+      "differentiation: " + rating.scores.differentiation + "\n" +
+      "execution signal: " + rating.scores.execution_signal + "\n" +
+      "risk resilience: " + rating.scores.risk_resilience + "\n" +
+      (rating.verdict ? "verdict: " + rating.verdict + "\n" : "") +
+      (rating.biggest_risk ? "biggest risk: " + rating.biggest_risk + "\n" : "") +
+      ((rating.improvements||[]).length ? "open improvements the panel flagged:\n- " + rating.improvements.join("\n- ") + "\n" : "") +
+      "</council_rating>";
+  }
+
   return "You are the SourceVenture Coach — a direct, technically credible mentor for a solo or small-team founder. This conversation is private; it is never shown to investors. " +
     "Ground your advice in the real project details below whenever relevant. When suggesting code changes, use short fenced code blocks. Be honest about weaknesses, but constructive. Keep replies tight. Never claim to have taken actions you didn't take (you cannot run code, browse further, or push commits).\n\n" +
+    "Style: lead with the answer, not a preamble. Prefer one specific, doable action over a list of five generic ones. If the founder's question is vague, ask one sharp clarifying question instead of guessing at length. Don't flatter — 'that's a great question' adds nothing.\n\n" +
     "When the founder asks you to evaluate, assess, or review the startup idea itself (not just the code), structure your answer under these headers, in this order: **Problem & market** (is the problem real, how big, who has it), **Differentiation** (what's the actual edge, and against whom), **Execution signal** (what the repo/pitch shows about ability to ship — cite specifics, don't guess), **Biggest risk** (the single thing most likely to kill this), **Next concrete step** (one thing to do this week, not a vague list). Ground every claim in the pitch or repo data given to you; say explicitly when you don't have enough information to judge something rather than inventing traction, market size, or user numbers.\n\n" +
-    "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\n\n" + repoBlock;
+    "If a <council_rating> block is present below, open that evaluation with a single line stating the overall score as a percentage, e.g. 'Overall: 62/100 — solid execution signal, weak differentiation,' then use it as the basis for the rest of your answer instead of re-deriving your own number. If no rating exists yet, don't invent a percentage — say a rating hasn't been run and suggest requesting one instead.\n\n" +
+    "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch +
+    (p.problem ? "\nProblem being solved: " + p.problem : "") +
+    (p.team ? "\nTeam: " + p.team : "") +
+    "\n\n" + repoBlock + ratingBlock;
 }
 
 async function sendCoachMessage(){
   var input = $("coach-input");
   var text = input.value.trim();
   if(!text) return;
-  if(STATE.me.plan !== "pro" && activeUsageCount() >= DAILY_CAP){
-    showToast("Daily free cap reached — upgrade for unlimited coaching.");
+  var bonusLeft = (STATE.auth && STATE.auth.user && STATE.auth.user.referralBonusRemaining) || 0;
+  if(activeUsageCount() >= currentDailyCap() && bonusLeft <= 0){
+    showToast("Daily cap reached — try again after it resets.");
     return;
   }
   input.value = "";
   appendCoachMsg("user", text);
+  track("coach_message_sent", COACH.project ? COACH.project.id : null);
 
-  if(STATE.me.plan !== "pro"){
-    COACH.usage.push(Date.now());
-    saveUsage(COACH.project.id, COACH.usage);
-    renderCapNote();
-  }
+  COACH.usage.push(Date.now());
+  saveUsage(COACH.project.id, COACH.usage);
+  renderCapNote();
 
   var scroll = $("coach-scroll");
   var typingEl = document.createElement("div");
@@ -1213,7 +1786,7 @@ async function sendCoachMessage(){
 
   try{
     if(!COACH.repoCtx){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
-    var system = coachSystemPrompt(COACH.project, COACH.repoCtx);
+    var system = coachSystemPrompt(COACH.project, COACH.repoCtx, COACH.rating);
     var apiMessages = COACH.messages.filter(function(m){ return m.role==="user"||m.role==="assistant"; }).map(function(m){ return {role:m.role, content:m.content}; });
     var reply = await callClaude(apiMessages, system);
     var el = document.getElementById("coach-typing"); if(el) el.remove();
@@ -1243,21 +1816,42 @@ async function renderSummary(main, id){
   renderSummaryCard(p);
 }
 
+// DRAFT -> REVIEW -> APPROVED lifecycle (First Drop, 2026-09-02). Generating
+// text and making it visible to investors used to be the same click — this
+// splits them: generateSummary() only ever writes investorSummaryDraft,
+// and approveSummary() is the one action that copies draft -> the live
+// investorSummary the backend actually exposes to approved investors.
+// Regenerating after approval never touches the still-live approved text
+// until the founder explicitly re-approves.
 function renderSummaryCard(p){
   var card = $("summary-card");
-  if(p.investorSummary){
-    card.innerHTML =
-      '<div class="doc-toolbar"><div class="doc-status"><span class="dot"></span>Published to investors</div>' +
-        '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="regenerateSummary(\'' + p.id + '\')">Regenerate</button><button class="btn btn-danger btn-sm" onclick="unpublishSummary(\'' + p.id + '\')">Unpublish</button></div></div>' +
-      '<div class="doc-body">' + escapeHtml(p.investorSummary) + '</div>';
-  } else {
+  var hasApproved = !!p.investorSummary;
+  var hasDraft = !!p.investorSummaryDraft;
+  var draftDiffersFromApproved = hasDraft && p.investorSummaryDraft !== p.investorSummary;
+
+  if(!hasApproved && !hasDraft){
     card.innerHTML = '<div style="padding:50px 30px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;">' +
       '<span class="material-symbols-outlined" style="font-size:38px;color:var(--on-surface-variant);">document_scanner</span>' +
       '<h3 style="font-size:18px;">No Summary Generated</h3>' +
-      '<p class="muted" style="max-width:400px;font-size:13.5px;">Compile the current pitch and repo signals into a unified technical brief for investors.</p>' +
-      '<button class="btn btn-primary" id="gen-summary-btn" onclick="generateSummary(\'' + p.id + '\')">Generate Summary</button>' +
+      '<p class="muted" style="max-width:400px;font-size:13.5px;">Draft an investor-facing brief from the current pitch and repo signals. Nothing is visible to investors until you explicitly approve it.</p>' +
+      '<button class="btn btn-primary" id="gen-summary-btn" onclick="generateSummary(\'' + p.id + '\')">Generate draft</button>' +
     '</div>';
+    return;
   }
+
+  var html = "";
+  if(hasApproved){
+    html += '<div class="doc-toolbar"><div class="doc-status"><span class="dot"></span>Approved for investors' + (p.investorSummaryApprovedAt ? ' · ' + timeAgo(p.investorSummaryApprovedAt) : '') + '</div>' +
+        '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="generateSummary(\'' + p.id + '\')">Regenerate draft</button><button class="btn btn-danger btn-sm" onclick="unpublishSummary(\'' + p.id + '\')">Unpublish</button></div></div>' +
+      '<div class="doc-body">' + escapeHtml(p.investorSummary) + '</div>';
+  }
+  if(hasDraft && (draftDiffersFromApproved || !hasApproved)){
+    html += '<div class="doc-toolbar" style="border-top:1px solid var(--outline-variant);margin-top:' + (hasApproved?'18px':'0') + ';">' +
+        '<div class="doc-status"><span class="dot" style="background:var(--tertiary);"></span>Draft — not visible to investors yet</div>' +
+        '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="generateSummary(\'' + p.id + '\')">Regenerate</button><button class="btn btn-primary btn-sm" onclick="approveSummary(\'' + p.id + '\')">' + (hasApproved ? 'Approve this update' : 'Approve for investors') + '</button></div></div>' +
+      '<div class="doc-body">' + escapeHtml(p.investorSummaryDraft) + '</div>';
+  }
+  card.innerHTML = html;
 }
 
 async function generateSummary(id){
@@ -1267,27 +1861,123 @@ async function generateSummary(id){
   var card = $("summary-card");
   card.innerHTML = '<div style="padding:40px;"><div class="skel" style="height:120px;"></div><div class="mono muted" style="font-size:11px;margin-top:10px;">Synthesizing…</div></div>';
   try{
-    var system = "You write short, investor-facing progress briefs for founders on SourceVenture. Write a 4-6 sentence brief in a professional, factual, editorial voice: what the project is, the real signal in the repo (stars, language, activity) if any, and what the founder is asking for. Do not fabricate numbers or traction not given to you. Output only the brief text, nothing else, no headers.";
-    var payload = "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + "\nRepo: " + p.owner + "/" + p.repo + " — language: " + (p.language||"unknown") + ", stars: " + (p.stars!=null?p.stars:"unknown") + ", contributors: " + (p.contributors!=null?p.contributors:"unknown");
+    var system = "You write short, investor-facing progress briefs for founders on SourceVenture. Write a 4-6 sentence brief in a professional, factual, editorial voice: what the project is, the real signal in the repo (stars, language, activity) if any, and what the founder is asking for. Do not fabricate numbers or traction not given to you — if there's no repo connected, write from the pitch alone and don't invent repo signal. Output only the brief text, nothing else, no headers.";
+    var repoLine = p.repo ? ("\nRepo: " + p.owner + "/" + p.repo + " — language: " + (p.language||"unknown") + ", stars: " + (p.stars!=null?p.stars:"unknown") + ", contributors: " + (p.contributors!=null?p.contributors:"unknown")) : "\nNo GitHub repo connected.";
+    var payload = "Project: " + p.name + "\nTagline: " + p.tagline + "\nFull pitch: " + p.pitch + repoLine;
     var summary = await callClaude([{ role:"user", content: payload }], system);
-    p.investorSummary = summary.trim();
-    p.investorSummaryApprovedAt = Date.now();
+    p.investorSummaryDraft = summary.trim();
     await ensureSignal(p);
     await saveProject(p);
     renderSummaryCard(p);
-    showToast("Summary generated and published to the investor directory.");
+    showToast("Draft ready — review it, then approve when you're ready for investors to see it.");
   }catch(e){
     renderSummaryCard(p);
-    showToast("Could not generate a summary. Try again.", true);
+    showToast("Could not generate a draft. Try again.", true);
   }
 }
-async function regenerateSummary(id){ await generateSummary(id); }
+async function approveSummary(id){
+  var p = await loadProject(id);
+  if(!p.investorSummaryDraft){ showToast("Nothing to approve yet.", true); return; }
+  p.investorSummary = p.investorSummaryDraft;
+  p.investorSummaryApprovedAt = Date.now();
+  await saveProject(p);
+  renderSummaryCard(p);
+  showToast("Approved — now visible to approved investors in the gated directory.");
+}
 async function unpublishSummary(id){
   var p = await loadProject(id);
-  p.investorSummary = null; p.investorSummaryApprovedAt = null;
+  p.investorSummary = null; p.investorSummaryApprovedAt = null; p.investorSummaryDraft = null;
   await saveProject(p);
   renderSummaryCard(p);
   showToast("Removed from the investor directory.");
+}
+
+/* ============================================================
+   AI BUSINESS PLAN (Pro-only, First Drop 2026-09-02)
+   ============================================================ */
+var BUSINESS_PLAN_SECTION_TITLES = {
+  executive_summary: "Executive summary", problem: "Problem", solution: "Solution",
+  product: "Product", target_customer: "Target customer", market: "Market",
+  competitive_landscape: "Competitive landscape", differentiation: "Differentiation",
+  business_model: "Business model", go_to_market: "Go-to-market", traction: "Traction",
+  technology: "Technology", team: "Team", risks: "Risks", opportunities: "Opportunities",
+  financial_assumptions: "Financial assumptions", growth_strategy: "Growth strategy",
+  execution_priorities: "Execution priorities", next_steps: "Next steps",
+};
+
+async function renderBusinessPlan(main, id){
+  var p = await loadProject(id);
+  if(!p){
+    main.innerHTML = '<div class="empty-state"><h3>Unable to load this project</h3><button class="btn btn-ghost" style="margin-top:14px;" onclick="nav(\'#/projects\')">Back to Projects</button></div>';
+    return;
+  }
+  if(!(STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro")){
+    main.innerHTML = '<div class="canvas"><div class="empty-state"><h3>Business plan is a Pro feature</h3>' +
+      '<p class="muted" style="max-width:420px;margin:10px auto;">An AI-generated, section-by-section business plan grounded in this project\'s real pitch, repo evidence and Source Score — included with SourceVenture Pro.</p>' +
+      '<button class="btn btn-primary" style="margin-top:8px;" onclick="openUpgradeModal()">Upgrade to Pro</button></div></div>';
+    return;
+  }
+  main.innerHTML = '<div class="canvas">' +
+    '<div class="eyebrow">Pro</div><h1 class="page-title">Business plan</h1>' +
+    '<p class="page-sub stack-lg">' + escapeHtml(p.name) + ' — generated from the actual pitch, repo evidence and Source Score. Missing information is called out, never invented.</p>' +
+    '<div id="plan-body"></div>' +
+  '</div>';
+  await loadAndRenderBusinessPlan(p);
+}
+
+function businessPlanHtml(plan){
+  if(!plan){
+    return '<div class="card" style="padding:40px 30px;text-align:center;"><p class="muted" style="margin-bottom:14px;">No business plan generated yet.</p><button class="btn btn-primary" id="gen-plan-btn" onclick="generateBusinessPlan()">Generate business plan</button></div>';
+  }
+  var sections = plan.sections || {};
+  var order = Object.keys(BUSINESS_PLAN_SECTION_TITLES);
+  var html = order.filter(function(k){ return sections[k]; }).map(function(k){
+    return '<div class="card" style="padding:20px 24px;margin-bottom:12px;"><h3 style="font-size:14px;margin-bottom:8px;">' + BUSINESS_PLAN_SECTION_TITLES[k] + '</h3>' +
+      '<p class="muted" style="font-size:13.5px;line-height:1.65;white-space:pre-wrap;">' + escapeHtml(sections[k]) + '</p></div>';
+  }).join("");
+  var missing = (plan.missing_information || []);
+  if(missing.length){
+    html += '<div class="card" style="padding:20px 24px;margin-bottom:12px;border-color:var(--tertiary);"><h3 style="font-size:14px;margin-bottom:8px;">Missing information</h3>' +
+      '<ul class="muted" style="font-size:13px;padding-left:18px;">' + missing.map(function(m){ return '<li style="margin-bottom:4px;">' + escapeHtml(m) + '</li>'; }).join("") + '</ul></div>';
+  }
+  html += '<button class="btn btn-ghost btn-sm" id="gen-plan-btn" onclick="generateBusinessPlan()">Regenerate</button>';
+  return html;
+}
+
+async function loadAndRenderBusinessPlan(p){
+  var el = $("plan-body");
+  if(!el) return;
+  el.innerHTML = '<div class="skel" style="height:100px;"></div>';
+  try{
+    var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/business-plan", { credentials:"include" });
+    var data = await res.json();
+    el.innerHTML = businessPlanHtml(data.plan);
+  }catch(e){
+    el.innerHTML = businessPlanHtml(null);
+  }
+}
+
+async function generateBusinessPlan(){
+  var id = window.location.hash.split("/")[2];
+  var p = await loadProject(id);
+  var el = $("plan-body");
+  var btn = $("gen-plan-btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Generating…"; }
+  if(el) el.innerHTML = '<div class="skel" style="height:160px;"></div><p class="mono muted" style="font-size:11px;margin-top:10px;">Writing a grounded, section-by-section plan — takes a bit longer than a chat reply…</p>';
+  try{
+    var repoText = p.repo ? (p._repoCtxCache && p._repoCtxCache.readme ? p._repoCtxCache.readme.slice(0,4000) : null) : null;
+    var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/business-plan", {
+      method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+      body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoText, problem: p.problem || null, team: p.team || null })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not generate a business plan");
+    if(el) el.innerHTML = businessPlanHtml(data);
+    showToast("Business plan generated.");
+  }catch(e){
+    if(el) el.innerHTML = businessPlanHtml(null);
+    showToast(e.message || "Could not generate a business plan.", true);
+  }
 }
 
 async function ensureSignal(p){
@@ -1299,11 +1989,25 @@ async function ensureSignal(p){
 /* ============================================================
    INVESTOR DIRECTORY (gated)
    ============================================================ */
+async function loadPublicStats(){
+  try{
+    var res = await fetch(API_BASE + "/api/stats");
+    if(!res.ok) throw new Error();
+    return await res.json();
+  }catch(e){
+    return { totalUsers: 0, userThreshold: USER_THRESHOLD, publishedProjects: 0, projectThreshold: DIRECTORY_THRESHOLD };
+  }
+}
 async function renderInvestors(main){
   await ensureMe();
   var published = await loadAllPublishedProjects();
   var count = published.length;
-  var open = count >= DIRECTORY_THRESHOLD;
+  var stats = await loadPublicStats();
+  var userCount = stats.totalUsers;
+  // Both real thresholds have to clear — matches the backend's own
+  // enforcement in /api/investors/directory (server-side, not just this
+  // display), so what's shown here can't drift from what's actually gated.
+  var open = count >= DIRECTORY_THRESHOLD && userCount >= USER_THRESHOLD;
   // Real server-side status now (was STATE.me.investorApplied — a
   // localStorage flag with zero backend enforcement). See
   // backend/main.py's investor_applications table + /api/investors/* routes.
@@ -1317,7 +2021,9 @@ async function renderInvestors(main){
       '<div class="lock-badge"><span class="material-symbols-outlined" style="color:var(--primary);">' + (open ? "lock_open" : "lock_person") + '</span></div>' +
       '<h2>' + (open ? "Directory Open" : "Opening Soon") + '</h2>' +
       '<p>' + (open ? "The initial cohort threshold has been reached. Approved investors can browse every published project below." : "The SourceVenture investor portal is highly curated. Access unlocks when the initial cohort reaches our threshold for market viability.") + '</p>' +
-      '<div class="prog-wrap"><div class="prog-top"><span>Cohort Alpha Status</span><span class="now">' + count + ' / ' + DIRECTORY_THRESHOLD + ' Projects</span></div>' +
+      '<div class="prog-wrap"><div class="prog-top"><span>Cohort Alpha — Users</span><span class="now">' + userCount + ' / ' + USER_THRESHOLD + ' Users</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (userCount/USER_THRESHOLD)*100) + '%;"></div></div></div>' +
+      '<div class="prog-wrap" style="margin-top:12px;"><div class="prog-top"><span>Cohort Alpha — Projects</span><span class="now">' + count + ' / ' + DIRECTORY_THRESHOLD + ' Projects</span></div>' +
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (count/DIRECTORY_THRESHOLD)*100) + '%;"></div></div></div>' +
       (invStatus === "approved" ?
         '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application approved — full access below.</div>' :
@@ -1348,7 +2054,7 @@ async function findInvestorMatches(){
   var interests = $("match-interests").value.trim();
   var results = $("match-results");
   if(!interests){ showToast("Describe what you're looking for first."); return; }
-  if(!isLoggedIn()){ openAuthModal("login"); return; }
+  if(!isLoggedIn()){ nav("#/signin"); return; }
   var btn = $("match-submit");
   btn.disabled = true; btn.textContent = "Searching…";
   results.innerHTML = '<div class="skel" style="height:80px;"></div>';
@@ -1363,6 +2069,7 @@ async function findInvestorMatches(){
     });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || "Could not find matches");
+    track("investor_match_searched");
     if(!data.matches || !data.matches.length){
       results.innerHTML = '<p class="muted" style="font-size:13px;">No strong matches in the current directory yet — try broadening your description.</p>';
     } else {
@@ -1383,7 +2090,11 @@ async function findInvestorMatches(){
 }
 
 function renderDirList(published, open, approved){
+  // Bail if the container is gone: renderInvestors awaits several fetches
+  // before getting here, and a fast navigation in the meantime replaces
+  // #root wholesale — the stale render would otherwise throw on null.
   var el = $("dir-list");
+  if(!el) return;
   var canSeeReal = open && approved;
 
   if(published.length === 0){
@@ -1427,7 +2138,7 @@ function openDirSummary(id){
 }
 
 function openInvestorApplyModal(){
-  if(!isLoggedIn()){ openAuthModal("login"); return; }
+  if(!isLoggedIn()){ nav("#/signin"); return; }
   openModal('<h3>Apply for investor access</h3><p class="modal-sub">Approval is required even after the cohort threshold is met — this is a real, manually-reviewed queue, not an instant unlock.</p>' +
     '<div class="form-error" id="ia-error"></div>' +
     '<div class="field"><label>Name</label><input type="text" id="ia-name" /></div>' +
@@ -1442,6 +2153,7 @@ async function submitInvestorApp(){
   try{
     await applyAsInvestor(name, firm);
     closeModal();
+    track("investor_application_submitted");
     showToast("Application submitted — you'll get access once it's reviewed and approved.");
     router();
   }catch(e){
@@ -1450,33 +2162,303 @@ async function submitInvestorApp(){
   }
 }
 /* ============================================================
+   ADMIN
+   2026-08-26: real admin panel — the investor-applications table has
+   existed since round 12 with no way to approve/reject anything except a
+   direct DB edit (see the comment on its CREATE TABLE in main.py). Gated
+   both server-side (require_admin, ADMIN_EMAILS env allowlist) and here
+   (route only reachable/linked for STATE.auth.user.isAdmin — an
+   unauthorized visit still just 403s cleanly against every fetch below).
+   ============================================================ */
+async function renderAdmin(main){
+  if(!STATE.auth || !STATE.auth.user || !STATE.auth.user.isAdmin){
+    main.innerHTML = '<div class="empty-state"><h3>Admin access required</h3><p>This account isn\'t on the admin allowlist.</p></div>';
+    return;
+  }
+  main.innerHTML = '<div class="skel" style="height:300px;"></div>';
+  try{
+    var overviewRes = await fetch(API_BASE + "/api/admin/overview", { credentials:"include" });
+    if(overviewRes.status === 403){ main.innerHTML = '<div class="empty-state"><h3>Admin access required</h3></div>'; return; }
+    var overview = await overviewRes.json();
+    var apps = await fetch(API_BASE + "/api/admin/investor-applications", { credentials:"include" }).then(function(r){ return r.json(); });
+    var users = await fetch(API_BASE + "/api/admin/users", { credentials:"include" }).then(function(r){ return r.json(); });
+    var projects = await fetch(API_BASE + "/api/admin/projects", { credentials:"include" }).then(function(r){ return r.json(); });
+
+    var pending = apps.filter(function(a){ return a.status === "pending"; });
+    var decided = apps.filter(function(a){ return a.status !== "pending"; });
+
+    main.innerHTML =
+      '<div class="eyebrow">Admin</div><h1 class="page-title">Operations</h1>' +
+      '<div class="grid-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0 32px;">' +
+        '<div class="card stat-card"><div class="lbl">Users</div><div class="val">' + overview.totalUsers + ' / ' + overview.userThreshold + '</div></div>' +
+        '<div class="card stat-card"><div class="lbl">Published</div><div class="val">' + overview.publishedProjects + ' / ' + overview.projectThreshold + '</div></div>' +
+        '<div class="card stat-card"><div class="lbl">Drafts</div><div class="val">' + overview.draftProjects + '</div></div>' +
+        '<div class="card stat-card"><div class="lbl">Pending investors</div><div class="val">' + overview.pendingInvestorApplications + '</div></div>' +
+      '</div>' +
+
+      '<h2 style="font-family:var(--font-display);font-size:18px;margin:0 0 12px;">Investor applications</h2>' +
+      (pending.length === 0 ? '<div class="card" style="padding:16px 18px;color:var(--on-surface-variant);font-size:13px;">Nothing pending.</div>' :
+        '<div class="stack-lg">' + pending.map(adminAppRowHtml).join("") + '</div>') +
+      (decided.length ? '<details style="margin-top:16px;"><summary class="mono" style="cursor:pointer;color:var(--on-surface-variant);font-size:12px;">' + decided.length + ' decided</summary>' +
+        '<div class="stack-lg" style="margin-top:10px;">' + decided.map(adminAppRowHtml).join("") + '</div></details>' : "") +
+
+      '<h2 style="font-family:var(--font-display);font-size:18px;margin:36px 0 12px;">Users (' + users.length + ')</h2>' +
+      '<div class="card" style="overflow-x:auto;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+          '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
+            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th>' +
+          '</tr></thead><tbody id="admin-users-tbody">' +
+          users.map(function(u){
+            return '<tr style="border-top:1px solid var(--outline-variant);" id="admin-user-row-' + u.id + '">' +
+              '<td style="padding:10px 14px;">' + escapeHtml(u.name) + '</td>' +
+              '<td style="padding:10px 14px;" class="mono muted">' + escapeHtml(u.email) + '</td>' +
+              '<td style="padding:10px 14px;">' + (u.emailVerified ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);">check_circle</span>' : '<span class="muted">—</span>') + '</td>' +
+              '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(u.createdAt * 1000) + '</td>' +
+              '<td style="padding:10px 14px;">' + adminPlanCellHtml(u) + '</td>' +
+            '</tr>';
+          }).join("") +
+          '</tbody></table>' +
+      '</div>' +
+
+      '<h2 style="font-family:var(--font-display);font-size:18px;margin:36px 0 12px;">Projects (' + projects.length + ')</h2>' +
+      (projects.length === 0 ? '<div class="card" style="padding:16px 18px;color:var(--on-surface-variant);font-size:13px;">No projects yet.</div>' :
+        '<div class="card" style="overflow-x:auto;">' +
+          '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+            '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
+              '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Owner</th><th style="padding:10px 14px;">Status</th><th style="padding:10px 14px;">Updated</th>' +
+            '</tr></thead><tbody>' +
+            projects.map(function(p){
+              return '<tr style="border-top:1px solid var(--outline-variant);">' +
+                '<td style="padding:10px 14px;">' + escapeHtml(p.name || "Untitled") + '</td>' +
+                '<td style="padding:10px 14px;" class="mono muted">' + escapeHtml(p.ownerEmail || "—") + '</td>' +
+                '<td style="padding:10px 14px;"><span class="proj-card pc-status" style="display:inline-block;">' + escapeHtml(p.status) + '</span></td>' +
+                '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(p.updatedAt * 1000) + '</td>' +
+              '</tr>';
+            }).join("") +
+            '</tbody></table>' +
+        '</div>');
+  }catch(e){
+    console.error(e);
+    main.innerHTML = errorBlock(e);
+  }
+}
+function adminAppRowHtml(a){
+  var pillColor = a.status === "approved" ? "var(--primary)" : a.status === "rejected" ? "var(--error)" : "var(--tertiary)";
+  return '<div class="card" style="padding:14px 18px;display:flex;align-items:center;gap:14px;">' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-weight:600;">' + escapeHtml(a.applicantName) + (a.firm ? ' <span class="muted" style="font-weight:400;">— ' + escapeHtml(a.firm) + '</span>' : '') + '</div>' +
+      '<div class="mono muted" style="font-size:11.5px;">' + escapeHtml(a.userEmail) + ' · applied ' + timeAgo(a.createdAt * 1000) + '</div>' +
+    '</div>' +
+    '<span class="mono" style="font-size:11px;text-transform:uppercase;color:' + pillColor + ';">' + a.status + '</span>' +
+    (a.status === "pending" ?
+      '<div style="display:flex;gap:8px;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="adminDecideApp(\'' + a.id + '\',\'reject\')">Reject</button>' +
+        '<button class="btn btn-primary btn-sm" onclick="adminDecideApp(\'' + a.id + '\',\'approve\')">Approve</button>' +
+      '</div>' : '') +
+  '</div>';
+}
+async function adminDecideApp(id, action){
+  try{
+    var res = await fetch(API_BASE + "/api/admin/investor-applications/" + id + "/decide", {
+      method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+      body: JSON.stringify({ action: action })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't save decision");
+    showToast(action === "approve" ? "Application approved." : "Application rejected.");
+    renderAdmin($("main"));
+  }catch(e){ showToast(e.message, true); }
+}
+
+// Manual Pro toggle — the stand-in for real billing until Stripe is
+// connected (see backend main.py's admin_set_user_plan docstring). This is
+// how a founder actually gets moved to Pro today.
+function adminPlanCellHtml(u){
+  var isPro = u.plan === "pro";
+  return '<span class="repo-badge" style="margin-right:8px;' + (isPro ? '' : 'border-color:var(--on-surface-variant);color:var(--on-surface-variant);') + '">' + (isPro ? "PRO" : "FREE") + '</span>' +
+    '<button class="btn btn-ghost btn-sm" onclick="adminSetPlan(\'' + u.id + '\',\'' + (isPro ? "free" : "pro") + '\')">' + (isPro ? "Downgrade" : "Make Pro") + '</button>';
+}
+async function adminSetPlan(userId, plan){
+  try{
+    var res = await fetch(API_BASE + "/api/admin/users/" + userId + "/plan", {
+      method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
+      body: JSON.stringify({ plan: plan })
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't update plan");
+    showToast(plan === "pro" ? "Account upgraded to Pro." : "Account moved back to Free.");
+    renderAdmin($("main"));
+  }catch(e){ showToast(e.message, true); }
+}
+
+/* ============================================================
    SETTINGS
    ============================================================ */
-const SETTINGS_TABS = [["account","Account"],["security","Security"],["billing","Billing"],["privacy","Privacy"]];
+const SETTINGS_TABS = [["account","Account"],["plan","Plan"],["security","Security"],["privacy","Privacy"]];
 
 async function renderSettings(main, tab){
   await ensureMe();
   main.innerHTML = '<div class="canvas">' +
-    '<div class="eyebrow">Settings</div><h1 class="page-title">' + (tab==="billing"?"Billing & Subscription":SETTINGS_TABS.filter(function(t){return t[0]===tab;}).map(function(t){return t[1];})[0]||"Settings") + '</h1>' +
-    (tab==="billing" ? '<p class="page-sub stack-lg">Manage your Founder Pro subscription, payment method and billing history.</p>' : '<p class="page-sub stack-lg">Manage your account, security and privacy on SourceVenture.</p>') +
+    '<div class="eyebrow">Settings</div><h1 class="page-title">' + (SETTINGS_TABS.filter(function(t){return t[0]===tab;}).map(function(t){return t[1];})[0]||"Settings") + '</h1>' +
+    '<p class="page-sub stack-lg">Manage your account, security and privacy on SourceVenture.</p>' +
     '<div class="settings-tabs">' + SETTINGS_TABS.map(function(t){ return '<div class="settings-tab' + (t[0]===tab?" active":"") + '" onclick="nav(\'#/settings/' + t[0] + '\')">' + t[1] + '</div>'; }).join("") + '</div>' +
     '<div id="settings-content"></div>' +
   '</div>';
 
   var el = $("settings-content");
   if(tab === "account") renderAccountTab(el);
+  else if(tab === "plan"){
+    // Stripe redirects back here after Checkout — success needs a fresh
+    // /api/auth/me since the webhook (a separate request from Stripe's
+    // servers) may have already flipped `plan` to pro by the time the
+    // browser gets redirected back.
+    var qIdx = window.location.hash.indexOf("?");
+    var checkoutResult = qIdx !== -1 ? new URLSearchParams(window.location.hash.slice(qIdx+1)).get("checkout") : null;
+    if(checkoutResult === "success"){
+      history.replaceState(null, "", window.location.pathname + "#/settings/plan");
+      fetch(API_BASE + "/api/auth/me", { credentials:"include" }).then(function(r){ return r.json(); }).then(function(u){
+        setAuth(u);
+        showToast(u.plan === "pro" ? "You're on Pro now." : "Payment received — this can take a few seconds to confirm.");
+        renderPlanTab(el);
+      });
+    } else if(checkoutResult === "cancel"){
+      history.replaceState(null, "", window.location.pathname + "#/settings/plan");
+      showToast("Checkout cancelled — no charge made.");
+      renderPlanTab(el);
+    } else {
+      renderPlanTab(el);
+    }
+  }
   else if(tab === "security") renderSecurityTab(el);
-  else if(tab === "billing") renderBillingTab(el);
   else if(tab === "privacy") renderPrivacyTab(el);
   else renderAccountTab(el);
 }
 
+function renderPlanTab(el){
+  var u = STATE.auth.user;
+  var isPro = u.plan === "pro";
+  var refLink = window.location.origin + window.location.pathname + "#/signup?ref=" + encodeURIComponent(u.referralCode || "");
+  el.innerHTML =
+    '<div class="card" style="padding:24px;max-width:520px;margin-bottom:16px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<h3 style="font-size:16px;">' + (isPro ? "SourceVenture Pro" : "Free plan") + '</h3>' +
+        '<span class="repo-badge" style="' + (isPro ? '' : 'border-color:var(--on-surface-variant);color:var(--on-surface-variant);') + '">' + (isPro ? "PRO" : "FREE") + '</span>' +
+      '</div>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:14px;">' + currentDailyCap() + ' AI coach messages / rolling 24h' + (isPro ? ", plus the AI-generated business plan." : ".") + '</p>' +
+      (isPro
+        ? '<p class="muted" style="font-size:12px;margin-bottom:10px;">You\'re on Pro. Thanks for supporting SourceVenture.</p><button class="btn btn-ghost btn-sm" onclick="openBillingPortal()">Manage billing</button>'
+        : '<button class="btn btn-primary btn-sm" onclick="startCheckout()" id="upgrade-btn">Upgrade to Pro — $15/mo</button>') +
+    '</div>' +
+    '<div class="card" style="padding:24px;max-width:520px;">' +
+      '<h3 style="font-size:16px;margin-bottom:6px;">Referrals</h3>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:14px;">Invite founders. When 3 of them publish a real project you get +50 bonus coach messages; at 5, another +100. Only real, published projects count — not signups.</p>' +
+      '<div class="field"><label>Your referral link</label><div style="display:flex;gap:8px;"><input type="text" id="ref-link" value="' + escapeHtml(refLink) + '" readonly style="flex:1;" /><button class="btn btn-ghost btn-sm" onclick="copyReferralLink()">Copy</button></div></div>' +
+      '<p class="muted" style="font-size:12px;margin-top:10px;">Bonus messages remaining: <strong>' + (u.referralBonusRemaining || 0) + '</strong></p>' +
+    '</div>';
+}
+function copyReferralLink(){
+  var input = $("ref-link");
+  input.select();
+  try{ navigator.clipboard.writeText(input.value); }catch(e){ document.execCommand("copy"); }
+  showToast("Referral link copied.");
+}
+function openUpgradeModal(){
+  openModal(
+    '<h3>SourceVenture Pro — $15/mo</h3>' +
+    '<p class="modal-sub">300 coach messages/24h instead of 10, and an AI-generated business plan for this project.</p>' +
+    '<div class="modal-actions"><button class="btn btn-primary btn-block" onclick="startCheckout()">Continue to payment</button><button class="btn btn-ghost btn-block" onclick="closeModal()">Not now</button></div>'
+  );
+}
+// Real Stripe Checkout — redirects to Stripe's own hosted page, this app
+// never sees card details. Falls back to an honest "not connected yet"
+// message (never a fake success) if the backend 503s because
+// STRIPE_SECRET_KEY/STRIPE_PRICE_ID aren't set.
+async function startCheckout(){
+  var btn = $("upgrade-btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Redirecting…"; }
+  try{
+    var res = await fetch(API_BASE + "/api/billing/checkout", { method:"POST", credentials:"include", headers: csrfHeaders() });
+    if(res.status === 503){
+      closeModal();
+      openModal('<h3>Payments aren\'t connected yet</h3><p class="modal-sub">The SourceVenture team hasn\'t finished setting up billing on this server. Plans are activated manually for now.</p><div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="closeModal()">Close</button></div>');
+      return;
+    }
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not start checkout");
+    window.location.href = data.url;
+  }catch(e){
+    showToast(e.message || "Could not start checkout.", true);
+    if(btn){ btn.disabled = false; btn.textContent = "Upgrade to Pro — $15/mo"; }
+  }
+}
+async function openBillingPortal(){
+  try{
+    var res = await fetch(API_BASE + "/api/billing/portal", { method:"POST", credentials:"include", headers: csrfHeaders() });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Could not open billing portal");
+    window.location.href = data.url;
+  }catch(e){ showToast(e.message || "Could not open billing portal.", true); }
+}
+
 function renderAccountTab(el){
+  var u = STATE.auth.user;
   el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;">' +
-    '<div class="field"><label>Name</label><input type="text" value="' + escapeHtml(STATE.auth.user.name) + '" disabled /></div>' +
-    '<div class="field"><label>Email</label><input type="email" value="' + escapeHtml(STATE.auth.user.email) + '" disabled /></div>' +
-    '<p class="muted" style="font-size:12px;">Set at signup — editing profile fields isn\'t supported in this preview.</p>' +
+    '<div style="display:flex;align-items:center;gap:16px;margin-bottom:22px;">' +
+      '<div id="avatar-preview">' + avatarHtml(u, 64) + '</div>' +
+      '<div>' +
+        '<input type="file" id="avatar-file" accept="image/*" style="display:none;" onchange="handleAvatarPick(event)" />' +
+        '<button class="btn btn-ghost btn-sm" onclick="$(\'avatar-file\').click();">Change photo</button>' +
+        (u.avatarUrl ? '<button class="btn btn-ghost btn-sm" style="margin-left:8px;" onclick="removeAvatar()">Remove</button>' : "") +
+        '<p class="muted" style="font-size:11px;margin-top:6px;">JPG or PNG, under ~450KB.</p>' +
+      '</div>' +
+    '</div>' +
+    '<div class="field"><label>Name</label><input type="text" id="account-name" value="' + escapeHtml(u.name) + '" /></div>' +
+    '<div class="field"><label>Email</label><input type="email" value="' + escapeHtml(u.email) + '" disabled /></div>' +
+    '<p class="muted" style="font-size:11px;margin-bottom:12px;">Email is set at signup and can\'t be changed here yet.</p>' +
+    '<p class="auth-error" id="account-error"></p>' +
+    '<button class="btn btn-primary btn-sm" onclick="saveAccountName()">Save name</button>' +
   '</div>';
+}
+async function saveAccountName(){
+  var name = $("account-name").value.trim();
+  var err = $("account-error");
+  if(!name){ err.textContent = "Name can't be empty."; return; }
+  err.textContent = "";
+  try{
+    var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ name: name }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't save");
+    setAuth(data.user);
+    showToast("Name updated.");
+    router();
+  }catch(e){ err.textContent = e.message; }
+}
+function handleAvatarPick(ev){
+  var file = ev.target.files && ev.target.files[0];
+  if(!file) return;
+  if(file.size > 450 * 1024){ showToast("That image is too large — under ~450KB please.", true); ev.target.value = ""; return; }
+  var reader = new FileReader();
+  reader.onload = async function(){
+    try{
+      var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ avatarDataUrl: reader.result }) });
+      var data = await res.json();
+      if(!res.ok) throw new Error(data.detail || "Couldn't upload");
+      setAuth(data.user);
+      showToast("Photo updated.");
+      router();
+    }catch(e){ showToast(e.message, true); }
+  };
+  reader.readAsDataURL(file);
+}
+async function removeAvatar(){
+  try{
+    var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ avatarDataUrl: "" }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't remove");
+    setAuth(data.user);
+    showToast("Photo removed.");
+    router();
+  }catch(e){ showToast(e.message, true); }
 }
 function renderSecurityTab(el){
   el.innerHTML = '<div class="card" style="padding:24px;max-width:480px;"><p class="muted" style="font-size:13.5px;margin-bottom:16px;">Signed in as ' + escapeHtml(STATE.auth.user.email) + '. Your password is stored hashed on the backend and never sent back to the browser.</p>' +
@@ -1497,47 +2479,14 @@ function renderPrivacyTab(el){
   el.innerHTML = '<div class="card" style="padding:24px;max-width:520px;"><p class="muted" style="font-size:13.5px;line-height:1.6;">Published projects and any investor summary you approve are stored on this SourceVenture backend and visible to everyone using this deployment. Drafts, coach chats and usage counters stay private to your browser. Repository data is fetched from GitHub’s public API; coach conversations are sent to your own Python backend, which forwards them to the Claude API using a key you control.</p></div>';
 }
 
-function renderBillingTab(el){
-  var isPro = STATE.me.plan === "pro";
-  el.innerHTML = '<div class="card plan-card stack-lg">' +
-      '<div><h2 style="font-size:19px;">' + (isPro ? "Founder Pro" : "Free") + '</h2><p class="mono muted" style="margin-top:4px;">' + (isPro ? "$15.00 / month" : "$0.00 / month") + '</p>' +
-        '<div class="plan-features">' +
-          planFeature("Repo-grounded AI coach") + planFeature(isPro ? "Unlimited coaching" : DAILY_CAP + " messages / 24h") +
-          planFeature("Investor summary generation") + planFeature("Gated investor directory listing") +
-        '</div></div>' +
-      (isPro ? '<button class="btn btn-ghost btn-sm" onclick="downgradePlan()">Cancel plan</button>' : '<button class="btn btn-primary btn-sm" onclick="upgradePlan()">Upgrade — $15/mo</button>') +
-    '</div>' +
-    '<div class="card" style="padding:0;overflow:hidden;">' +
-      '<div style="padding:16px 18px;border-bottom:1px solid var(--outline-variant);"><h3 style="font-size:14px;">Payment method</h3></div>' +
-      '<div style="padding:16px 18px;">' + (isPro ? '<p class="mono" style="font-size:13px;">•••• •••• •••• 4242 (demo)</p>' : '<p class="muted" style="font-size:13px;">No payment method on file — this preview never asks for one.</p>') + '</div>' +
-    '</div>' +
-    (isPro ? '<div class="card" style="padding:0;overflow:hidden;margin-top:16px;"><div style="padding:16px 18px;border-bottom:1px solid var(--outline-variant);"><h3 style="font-size:14px;">Billing history</h3></div>' +
-      '<div class="invoice-row"><span>Invoice #DEMO-0002</span><span class="mono">$15.00</span></div>' +
-      '<div class="invoice-row"><span>Invoice #DEMO-0001</span><span class="mono">$15.00</span></div></div>' : "") +
-    '<p class="muted" style="font-size:11.5px;margin-top:14px;">This preview never charges a card. Upgrading here only toggles the plan flag so you can see the unlimited-coach experience.</p>';
-}
-function planFeature(text){
-  return '<div class="pf"><span class="material-symbols-outlined">check_circle</span>' + escapeHtml(text) + '</div>';
-}
-async function upgradePlan(){
-  await saveMe({ plan:"pro" });
-  showToast("Founder Pro active (preview only — no real charge).");
-  renderSettings($("main"), "billing");
-}
-async function downgradePlan(){
-  await saveMe({ plan:"free" });
-  showToast("Back to Free.");
-  renderSettings($("main"), "billing");
-}
-
 /* ============================================================
    SUPPORT CHATBOT (site-wide help, separate from the per-project coach)
    ============================================================ */
 let HELP_CHAT = { messages: [], open: false };
 
 function helpSystemPrompt(){
-  return "You are the SourceVenture Help Assistant — a short, friendly guide to using this specific site. This is a general support chat, not the per-project coach. Answer questions about how the product works and, whenever relevant, tell the user exactly which page to go to using this exact link text so it's clear: Dashboard (#/dashboard), New Project (#/new), Projects (#/projects), a project's AI Coach (#/coach/<id>), Investor Directory (#/investors), Settings → Billing (#/settings/billing), Settings → Security (#/settings/security). " +
-    "What this site does: founders publish a project (pitch + public GitHub repo) for free, then get a private AI coach that reads the real repo and can evaluate the startup idea (problem/market, differentiation, execution signal, risk, next step). Founders can generate an investor-facing summary and choose to publish it into a gated directory that opens once enough projects exist. Investors apply for access and browse published summaries. Accounts are free email/password signup; there is a paid 'Founder Pro' tier that removes the daily coach message cap. " +
+  return "You are the SourceVenture Help Assistant — a short, friendly guide to using this specific site. This is a general support chat, not the per-project coach. Answer questions about how the product works and, whenever relevant, tell the user exactly which page to go to using this exact link text so it's clear: Dashboard (#/dashboard), New Project (#/new), Projects (#/projects), a project's AI Coach (#/coach/<id>), Investor Directory (#/investors), Settings → Security (#/settings/security). " +
+    "What this site does: founders publish a project (pitch + optionally a public GitHub repo) for free, then get a private AI coach that reads the real repo and can evaluate the startup idea (problem/market, differentiation, execution signal, risk, next step). Founders can generate an investor-facing summary draft, review it, and explicitly approve it before it's ever visible to an investor, then choose to publish it into a gated directory that opens once enough projects exist. Investors apply for access and browse published summaries. Accounts are free email/password signup; the free plan is capped at " + FREE_DAILY_CAP + " coach messages per rolling 24h, and SourceVenture Pro ($15/mo) raises that to " + PRO_DAILY_CAP + "/24h plus an AI-generated business plan. " +
     "Keep answers to 2-4 sentences unless the user asks for more detail. If you don't know something about the user's specific account or data, say so plainly instead of guessing.";
 }
 function loadHelpChat(){ HELP_CHAT.messages = lsGetJSON("helpChat", []); }
@@ -1613,6 +2562,10 @@ document.addEventListener("mousemove", function(e){
   el.style.setProperty("--my", (e.clientY - r.top) + "px");
 });
 
+// (The magnetic-hover effect that pulled buttons toward the cursor was
+// removed — buttons now stay put. The .magnetic class is left on the
+// markup as a no-op hook in case a subtler version is wanted later.)
+
 // Scroll-reveal: fade+rise elements marked .reveal into place once, on entry.
 var revealObserver = new IntersectionObserver(function(entries){
   entries.forEach(function(entry){
@@ -1623,7 +2576,23 @@ function observeReveals(root){
   (root||document).querySelectorAll(".reveal:not(.in)").forEach(function(el){ revealObserver.observe(el); });
 }
 
+function setCookieConsent(level){
+  try{ localStorage.setItem("sv-cookie-consent", JSON.stringify({ level: level, at: Date.now() })); }catch(e){}
+  var el = document.getElementById("cookie-banner");
+  if (el) el.classList.remove("show");
+}
+function initCookieBanner(){
+  var el = document.getElementById("cookie-banner");
+  if (!el) return;
+  var raw = null;
+  try{ raw = localStorage.getItem("sv-cookie-consent"); }catch(e){}
+  if (!raw) el.classList.add("show");
+}
+
 async function initApp(){
+  startSitewideDots();
+  initCookieBanner();
+
   await ensureMe();
   await router();
 }
