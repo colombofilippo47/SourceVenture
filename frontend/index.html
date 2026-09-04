@@ -16,19 +16,19 @@
      serves this file in production — the API already sends X-Frame-Options. -->
 <title>SourceVenture — Venture Engineering</title>
 <meta name="description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it — before optionally sharing an approved summary with investors." />
-<link rel="canonical" href="https://sourceventure.com/" />
+<link rel="canonical" href="https://sourceventure.dev/" />
 <!-- Open Graph / Twitter Card — used by link-preview crawlers and by some
      AI assistants that fetch a page's social metadata to summarize it. -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="SourceVenture" />
 <meta property="og:title" content="SourceVenture — Venture Engineering" />
 <meta property="og:description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it." />
-<meta property="og:url" content="https://sourceventure.com/" />
-<meta property="og:image" content="https://sourceventure.com/assets/logo.png" />
+<meta property="og:url" content="https://sourceventure.dev/" />
+<meta property="og:image" content="https://sourceventure.dev/assets/logo.png" />
 <meta name="twitter:card" content="summary" />
 <meta name="twitter:title" content="SourceVenture — Venture Engineering" />
 <meta name="twitter:description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it." />
-<meta name="twitter:image" content="https://sourceventure.com/assets/logo.png" />
+<meta name="twitter:image" content="https://sourceventure.dev/assets/logo.png" />
 <!-- JSON-LD structured data — helps both classic rich-result search and
      AI answer engines correctly identify what this product is, rather
      than guessing from unstructured page text. -->
@@ -1394,9 +1394,17 @@ function errorBlock(e){
   return '<div class="empty-state"><h3>Something went wrong</h3><p>' + escapeHtml((e && e.message) || "Try again.") + '</p><button class="btn btn-ghost" style="margin-top:14px;" onclick="router()">Try again</button></div>';
 }
 
+// Shown on drill-down pages that aren't themselves in the sidenav (a
+// project's detail/coach/summary, new-project) — Denis: "put a back arrow
+// so people can get back to pages." Plain history.back() rather than a
+// hand-maintained parent-route map: it always returns to wherever the
+// user actually came from, which is what "back" means for a browser-tab
+// app regardless of how they navigated in.
+var BACK_ARROW_ROUTES = ["project", "coach", "summary", "new"];
 function appShellHtml(routeName){
+  var showBack = BACK_ARROW_ROUTES.indexOf(routeName) !== -1;
   return '<div id="topbar">' +
-      '<div class="tb-left">' + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+      '<div class="tb-left">' + (showBack ? '<button class="tb-icon" title="Back" onclick="history.back();" style="margin-right:4px;"><span class="material-symbols-outlined">arrow_back</span></button>' : '') + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
@@ -1749,7 +1757,8 @@ async function renderCoach(main, id){
         '</div>' +
       '</div>' +
       '<div class="coach-side">' +
-        '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button></div>' +
+        '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button>' +
+          '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="requestPitchImprovement()"><span class="material-symbols-outlined" style="font-size:15px;">auto_fix_high</span>Improve my pitch</button></div>' +
         '<div class="coach-side-block"><h4>Source Score</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
         (p.repo ?
         '<div class="coach-side-block"><h4>Project context</h4><div class="metric-row"><span>Repo</span><span class="mval mono" style="font-size:11px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</span></div>' +
@@ -1783,13 +1792,56 @@ async function renderCoach(main, id){
   }
 }
 
+// 2026-09: "make it so u can better the pitch with ai... the ai in answer
+// gives a button to implement automatically." Rather than trying to parse
+// arbitrary free-form advice out of every reply, the pitch-improvement
+// button (below) asks the coach — as a normal user message, not a change
+// to its system prompt/behavior — to wrap its suggested rewrite in
+// <<<PITCH>>>...<<<END_PITCH>>> markers. Any assistant reply containing
+// that marker gets a real "Apply to pitch" button; nothing else changes
+// about how replies render.
+var PITCH_MARKER_RE = /<<<PITCH>>>([\s\S]*?)<<<END_PITCH>>>/;
 function renderCoachMessages(){
   var scroll = $("coach-scroll");
   if(!scroll) return;
-  scroll.innerHTML = COACH.messages.map(function(m){
-    return '<div class="cmsg ' + (m.role==="user"?"user":"") + '"><div class="cmeta">' + (m.role==="user"?"YOU":"COACH") + ' · ' + new Date(m.ts||Date.now()).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + '</div><div class="cbody">' + renderRichText(m.content) + '</div></div>';
+  scroll.innerHTML = COACH.messages.map(function(m, i){
+    var match = m.role === "assistant" ? m.content.match(PITCH_MARKER_RE) : null;
+    var displayText = match ? m.content.replace(PITCH_MARKER_RE, "").trim() : m.content;
+    var applyBtn = match ? '<button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="applyPitchSuggestion(' + i + ')">Apply to pitch</button>' : "";
+    return '<div class="cmsg ' + (m.role==="user"?"user":"") + '"><div class="cmeta">' + (m.role==="user"?"YOU":"COACH") + ' · ' + new Date(m.ts||Date.now()).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + '</div><div class="cbody">' + renderRichText(displayText) + applyBtn + '</div></div>';
   }).join("");
   scroll.scrollTop = scroll.scrollHeight;
+}
+// Held in a module var rather than round-tripped through an HTML
+// attribute string — a pitch can contain quotes/newlines that would break
+// out of an onclick="..." attribute if serialized inline.
+var PENDING_PITCH_SUGGESTION = null;
+function applyPitchSuggestion(msgIndex){
+  var m = COACH.messages[msgIndex];
+  var match = m && m.content.match(PITCH_MARKER_RE);
+  if(!match) return;
+  PENDING_PITCH_SUGGESTION = match[1].trim();
+  openModal(
+    '<h3>Apply this pitch?</h3>' +
+    '<p class="modal-sub">This replaces your current pitch. You can always ask the coach for another revision afterward.</p>' +
+    '<div class="card" style="padding:14px 16px;margin:12px 0;max-height:220px;overflow-y:auto;"><p style="font-size:13px;white-space:pre-wrap;margin:0;">' + escapeHtml(PENDING_PITCH_SUGGESTION) + '</p></div>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="confirmApplyPitch()">Apply</button></div>'
+  );
+}
+async function confirmApplyPitch(){
+  var newPitch = PENDING_PITCH_SUGGESTION;
+  closeModal();
+  if(!newPitch) return;
+  try{
+    COACH.project.pitch = newPitch;
+    await saveProject(COACH.project);
+    showToast("Pitch updated.");
+  }catch(e){ showToast("Couldn't save the new pitch. Try again.", true); }
+}
+async function requestPitchImprovement(){
+  var input = $("coach-input");
+  input.value = "Rewrite my pitch to be sharper and stronger, based on everything you know about this startup. Give a short note first on what you changed and why, then put ONLY the final improved pitch text between the markers <<<PITCH>>> and <<<END_PITCH>>>.";
+  await sendCoachMessage();
 }
 function appendCoachMsg(role, content, skipStore){
   COACH.messages.push({ role:role, content:content, ts:Date.now() });

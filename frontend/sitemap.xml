@@ -9,23 +9,21 @@
   legal pages too since they DO have distinct, real content once
   rendered, and modern crawlers (Googlebot, GPTBot) do execute JS.
 
-  IMPORTANT: sourceventure.com below is a placeholder — swap in the real
-  deployed domain before this goes live, and update robots.txt's Sitemap:
-  line to match.
+  Domain: sourceventure.dev (confirmed).
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://sourceventure.com/</loc>
+    <loc>https://sourceventure.dev/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://sourceventure.com/#/privacy</loc>
+    <loc>https://sourceventure.dev/#/privacy</loc>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
-    <loc>https://sourceventure.com/#/terms</loc>
+    <loc>https://sourceventure.dev/#/terms</loc>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
   </url>
