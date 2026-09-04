@@ -1,5 +1,85 @@
 # CHANGES.md — SourceVenture
 
+## 2026-09-05 — Merged collaborator's Stripe billing, root-caused "AI isn't working," full bug-fix + feature pass, deployed
+
+Denis: merge colombofilippo47's Stripe billing commit without losing
+anything, fix the AI once and for all (real screenshot showed every
+help-chat message failing), then a large batched punch list — payments,
+header shortcuts, mobile UI, analytics, verification flow, publish
+failures, investors page cleanup, notifications center, AI provider
+fallbacks, GitHub-stars-aware rating, docs/support pages — "we are
+shipping today."
+
+- **Merged colombofilippo47's real Stripe billing** (`integrate/denis-plus-
+  analytics`, commit `1534d65`) into the Postgres-migrated branch:
+  Checkout/portal/webhook endpoints, `stripe_customer_id`/
+  `stripe_subscription_id` columns, his SQLite-style `?`/non-`IF NOT
+  EXISTS` DDL converted to this branch's Postgres conventions. Verified via
+  a scripted line-by-line reconciliation (every added line from his commit
+  confirmed present, 0 silently dropped) since Denis explicitly asked for
+  proof nothing was lost. Re-checked his branch before finishing this
+  round — no newer commits since `1534d65`, nothing missed.
+- **Root-caused "something went wrong reaching the AI" (real bug, not
+  flakiness):** a previous fix made `_try_gemini` sleep out Google's
+  suggested retry delay (up to ~45s, twice) on a 429 — actively wrong on
+  Vercel serverless, where the function's own execution timeout is far
+  shorter than that, so any real rate-limit burst reliably hit a bare
+  platform timeout with no JSON body, which the frontend can't tell apart
+  from any other failure. Fixed by failing fast (no sleep) and falling
+  through a real provider chain instead: Gemini → Groq → OpenRouter →
+  Anthropic, each tried only if its key is actually set. **Only Gemini is
+  actually configured right now** — the only other candidate key on hand
+  (a Groq key from Max OS) is org-restricted and doesn't work; a real
+  free OpenRouter or working Groq key needs to be added for genuine
+  redundancy. Confirmed live: the free-tier 5rpm Gemini cap is real and
+  easy to trip (hit it by accident mid-testing) — now fails in ~1s with an
+  honest "AI is busy, try shortly" message instead of hanging.
+- **"Publishing failing":** `saveProject()` discarded the backend's real
+  error detail and showed a flat, misleading "Is the backend running?"
+  toast — the actual common cause (403, email not verified) is now shown
+  verbatim. Also: **Resend is still in sandbox mode** — it only delivers
+  to Denis's own inbox, so any other real signup silently never gets a
+  verification email at all. This needs a verified sending domain in the
+  Resend dashboard to actually work for anyone but him.
+- **Two real, pre-existing CSS specificity bugs** (not breakpoint issues —
+  confirmed via a live logged-in screenshot at 1440px): `#topbar
+  .tb-icon{display:flex}` (unconditional, no media query) was tying with
+  and beating the mobile-only hide rules for the hamburger AND the sync/
+  account buttons at equal specificity, so all three were visible on
+  every screen size regardless of the media query's own intent. Fixed by
+  raising the hide rules' specificity to unambiguously win.
+- GitHub star count (already fetched, never actually sent): `repoContext`
+  sent to the rating council and business-plan generator only ever
+  included readme/description, silently dropping stars/language/
+  contributors. New shared `repoContextToText()` fixes both call sites;
+  growth-analyst judge prompt now explicitly told to treat stars as one
+  real traction signal.
+- Investors page pruned to just the cohort countdown/bars per Denis
+  ("remove everything active investor related except the countdown") —
+  dropped the "Find your match" tool and the directory listing/
+  application-status flow (code left in place, not deleted, for when the
+  directory actually opens). Same countdown bars added, compact, to the
+  landing page's investor section.
+- New in-app Notifications center (sidebar tab + unread badge): real
+  `notifications` table, fires on referral milestones, Stripe plan
+  changes, and investor-application decisions — not just a toast that's
+  gone on refresh.
+- Signup's "email me updates" checkbox (already built) now actually
+  surfaces in the admin users table (emailable / opted-out column) — was
+  captured and stored but never visible anywhere for Denis to read.
+- Email verification gate now polls the real server-side flag every 4s
+  and auto-continues the moment it flips true, on any device — was a dead
+  end requiring a manual refresh.
+- Real Documentation and Support pages (were toast placeholders); header
+  logo/wordmark nudged to visually center in the topbar row.
+- Deployed: backend (`vercel.json` still legacy `builds`/`routes` —
+  `functions.maxDuration` conflicts with it, confirmed via a real failed
+  build) and frontend, both promoted to production and smoke-tested live
+  end-to-end (signup → verify → coach → publish → rate → notifications) on
+  the real `sourceventure.dev`/`api.sourceventure.dev` domains, not just a
+  preview URL. All scratch test accounts deleted from the production DB
+  before finishing.
+
 ## 2026-09-04 (round 2, same day) — Postgres migration, full deploy, closing feature list
 
 Denis: password strictness + a playful "runs away" button on a weak

@@ -214,6 +214,25 @@ body.sidenav-open #root{z-index:210;}
    the wordmark follows at the point the hamburger is also present. */
 @media(max-width:640px){#topbar .tb-divider,#topbar .tb-badge{display:none;}}
 @media(max-width:480px){#topbar .sv-wordmark{display:none;}}
+/* 2026-09-05 (Denis: "dont like the header layout in mobile in the
+   dashboard") — 4 separate icon buttons (hamburger, theme, sync,
+   account) spread across a bar with hidden wordmark/badge left a big
+   dead gap in the middle and felt cluttered on the right. "Sync" is
+   low-value chrome (a static "everything's already live" toast, no real
+   action) and "Account" duplicates the drawer's own account row/Settings
+   link one tap away — both drop on mobile, leaving just the theme toggle. */
+/* 2026-09-05: same specificity bug class as the hamburger fix above —
+   #topbar .tb-icon{display:flex} (unconditional, appears later in source)
+   was tying with and beating this media-scoped rule at equal specificity,
+   so sync/account were never actually hidden on mobile despite the intent
+   below. Adding .tb-icon to this selector (1 id + 2 classes) makes it
+   unambiguously more specific instead of relying on source-order luck. */
+@media(max-width:640px){#topbar .tb-icon.tb-sync,#topbar .tb-icon.tb-account{display:none;}}
+.tb-page-label{display:none;}
+@media(max-width:640px){
+  .tb-page-label{display:inline-block;font-family:var(--font-display);font-weight:700;font-size:15px;color:var(--on-surface-variant);margin-left:2px;padding-left:10px;border-left:1px solid var(--outline-variant);}
+}
+@media(max-width:400px){.tb-page-label{display:none;}} /* smallest phones: back to just hamburger+mark, no room to spare */
 #topbar .tb-right{display:flex;align-items:center;gap:6px;}
 #topbar .tb-icon{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);}
 #topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);transform:scale(1.08);}
@@ -230,14 +249,24 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .app-layout{display:flex;min-height:calc(100vh - var(--topbar-h));}
 #sidenav{width:var(--nav-w);flex:none;border-right:1px solid var(--outline-variant);background:rgba(5,5,6,.4);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;flex-direction:column;position:sticky;top:var(--topbar-h);height:calc(100vh - var(--topbar-h));}
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
-.tb-hamburger{display:none;}
+/* 2026-09-05 (Denis: "the three lines in dashboard in header arent
+   necessary in desktop") — this was a real, always-on specificity bug,
+   not just a too-generous breakpoint: #topbar .tb-icon above (specificity
+   1 id + 1 class) sets display:flex on EVERY .tb-icon including this one,
+   which unconditionally beat a bare `.tb-hamburger{display:none}` (only 1
+   class) regardless of viewport width or source order — the hamburger was
+   effectively visible on every screen size, this media query's own
+   display:flex was never the thing actually showing it. Matching the
+   #topbar prefix on both rules below fixes the specificity, not just the
+   breakpoint. */
+#topbar .tb-hamburger{display:none;}
 #sidenav-overlay{display:none;}
 /* Real mobile nav: #sidenav becomes a fixed slide-in drawer (was just
    `display:none` with nothing built to replace it — no way to reach
    Projects/Investors/Settings/Admin on a phone at all). Toggled by
    .tb-hamburger, dismissed by tapping #sidenav-overlay or any nav link. */
-@media(max-width:900px){
-  .tb-hamburger{display:flex;}
+@media(max-width:820px){
+  #topbar .tb-hamburger{display:flex;}
   #sidenav{
     display:flex;position:fixed;top:0;left:0;height:100vh;width:280px;max-width:82vw;
     z-index:250;transform:translateX(-100%);transition:transform .28s var(--ease-out-expo);
@@ -261,7 +290,14 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
 .avatar-circle.pro{box-shadow:0 0 0 2px #e8b84b,0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);}
-.sv-brand{display:inline-flex;align-items:center;gap:8px;}
+/* 2026-09-05 (Denis: "logo and title in header are a bit discentred
+   vertically, put them down") — .sv-brand/#topbar both already used
+   align-items:center, which centers the mark and wordmark relative to
+   EACH OTHER correctly, but the mark's source PNG has a sliver of
+   transparent padding above the glyph, so the visual weight of the whole
+   lockup reads a few px above true-center in the 60px bar. A small
+   relative nudge down fixes what flexbox math alone can't. */
+.sv-brand{display:inline-flex;align-items:center;gap:8px;position:relative;top:2px;}
 .sv-mark{flex:none;display:block;width:auto;}
 .sv-mark-light{display:none;}
 :root[data-theme="light"] .sv-mark-dark{display:none;}
@@ -272,6 +308,7 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-links a{display:flex;align-items:center;gap:12px;padding:11px 20px;color:var(--on-surface-variant);font-size:14px;border-left:2px solid transparent;transition:color .15s,background .15s;}
 .sn-links a:hover{color:var(--on-surface);background:var(--surface-high);}
 .sn-links a.active{color:var(--primary);background:var(--surface-low);border-left-color:var(--primary);}
+.sn-notif-badge{margin-left:auto;background:var(--primary);color:var(--on-primary,#0a0a0a);font-size:10.5px;font-weight:700;line-height:1;border-radius:999px;padding:3px 6px;min-width:16px;text-align:center;}
 .sn-foot{border-top:1px solid var(--outline-variant);padding:10px;}
 .sn-foot a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);color:var(--on-surface-variant);font-size:13px;}
 .sn-foot a:hover{color:var(--on-surface);background:var(--surface-high);}
@@ -674,9 +711,30 @@ input[type="password"]::-webkit-credentials-auto-fill-button{display:none !impor
 @media(max-width:760px){body.is-coach-route #help-fab,body.is-coach-route #help-panel{display:none;}}
 #help-fab:active{transform:scale(.96);}
 #help-fab:hover{background:var(--primary-bright);}
-#help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
-@media(max-width:760px){#help-panel{bottom:136px;right:14px;max-height:calc(100vh - 220px);}}
+/* 2026-09-05 real bug (Denis: "help button doesnt work"): background was
+   var(--surface), a near-fully-transparent glass tone (alpha .035/.05 —
+   confirmed via computed style) meant to sit on a blurred backdrop, but
+   this panel never had a backdrop-filter of its own — on desktop the
+   panel is small enough this read as a faint tint; blown up to a near-
+   full-screen mobile sheet it looked like the panel wasn't there at all,
+   just floating unstyled text over the page. Same solid frosted-panel
+   treatment #topbar/.auth-card already use (--surface-lowest + a real
+   blur) instead. */
+#help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface-lowest);backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
 #help-panel.open{display:flex;}
+#help-backdrop{display:none;}
+/* Mobile: a real near-full-screen sheet with a dimmed backdrop behind it,
+   not a small box anchored to the fab's corner floating directly over
+   page content (see toggleHelpWidget()'s comment for the full reasoning). */
+@media(max-width:640px){
+  #help-panel{top:8vh;left:10px;right:10px;bottom:10px;width:auto;max-width:none;height:auto;max-height:none;border-radius:20px 20px var(--radius-lg) var(--radius-lg);z-index:251;}
+  #help-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:250;opacity:0;pointer-events:none;transition:opacity .25s ease;}
+  #help-backdrop.show{opacity:1;pointer-events:auto;}
+  /* No #root stacking-context fix needed here (unlike the nav drawer) —
+     #help-fab/#help-panel are already direct <body> children, siblings
+     of #root rather than descendants, so their own z-index already
+     competes at the top level without being capped. */
+}
 .cookie-banner{position:fixed;left:22px;right:22px;bottom:22px;max-width:520px;background:var(--surface-lowest);backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:200;display:none;flex-direction:column;gap:12px;}
 .cookie-banner.show{display:flex;}
 .cookie-banner p{font-size:12.5px;line-height:1.6;color:var(--on-surface-variant);}
@@ -731,6 +789,7 @@ input[type="password"]::-webkit-credentials-auto-fill-button{display:none !impor
   </div>
 </div>
 
+<div id="help-backdrop" onclick="toggleHelpWidget();"></div>
 <button id="help-fab" title="Help" onclick="toggleHelpWidget()"><span class="material-symbols-outlined">chat_bubble</span></button>
 <div id="help-panel">
   <div class="help-head"><h4>SourceVenture Help</h4><button class="modal-close" style="position:static;" onclick="toggleHelpWidget()" aria-label="Close">&times;</button></div>
@@ -1321,6 +1380,30 @@ async function resendVerificationEmail(btn){
   }
 }
 
+// 2026-09-05 (Denis: "verification flow perfect, like make it so the page
+// automatically refresh when verified even if on different device") —
+// polls the real server-side emailVerified flag (not a local flag, so a
+// click on a phone while this tab is open on a laptop still picks it up)
+// every 4s while the gate above is showing, and re-runs the router the
+// moment it flips true. Cleared by stopVerifyGatePoll() the instant the
+// gate itself isn't the current render, so it never runs in the
+// background once the user is past it.
+var VERIFY_GATE_POLL = null;
+function startVerifyGatePoll(){
+  if(VERIFY_GATE_POLL) return;
+  VERIFY_GATE_POLL = setInterval(async function(){
+    await checkAuth();
+    if(STATE.auth && STATE.auth.user && STATE.auth.user.emailVerified){
+      stopVerifyGatePoll();
+      showToast("Email verified!");
+      router();
+    }
+  }, 4000);
+}
+function stopVerifyGatePoll(){
+  if(VERIFY_GATE_POLL){ clearInterval(VERIFY_GATE_POLL); VERIFY_GATE_POLL = null; }
+}
+
 async function submitAuthForm(mode){
   var isSignup = mode === "signup";
   var name = isSignup ? $("auth-name").value.trim() : null;
@@ -1406,12 +1489,30 @@ function termsHtml(){
     '<h2>Your account</h2><p>You\'re responsible for what you publish and for keeping your password to yourself. Don\'t share an account across people; each real user should have their own.</p>' +
     '<h2>Your content</h2><p>You keep ownership of what you write here. By publishing a project you\'re allowing it to be shown publicly on the platform (and, for the AI coach, sent to our AI provider to generate responses). Draft projects are not public and are never shown to anyone but you.</p>' +
     '<h2>The AI coach isn\'t advice</h2><p>Coach output is generated by an AI model reading your pitch and public repo content. It can be wrong. Treat it as a drafting aid, not investment, legal, or financial advice.</p>' +
-    '<h2>Free tier</h2><p>The free tier includes 25 coach messages per rolling 24 hours, enforced server-side. We may change limits or pricing as the product develops; we\'ll try to be upfront about it rather than silently changing behavior.</p>' +
+    '<h2>Free tier</h2><p>The free tier includes ' + FREE_DAILY_CAP + ' coach messages per rolling 24 hours, enforced server-side (Pro raises that to ' + PRO_DAILY_CAP + '/24h). We may change limits or pricing as the product develops; we\'ll try to be upfront about it rather than silently changing behavior.</p>' +
     '<h2>Fair use</h2><p>Don\'t use this to publish anything illegal, to impersonate someone else, or to abuse the coach/investor-application flow (e.g. scripted spam applications). We can suspend accounts that do.</p>' +
     '<h2>No warranty</h2><p>Provided as-is, without warranty of any kind, while this is actively being built. We\'ll do our best to keep it reliable and to communicate honestly when something is broken rather than pretend it isn\'t.</p>' +
     '<h2>Contact</h2><p>' + escapeHtml(sourceventureContactNote()) + '</p>';
 }
 function sourceventureContactNote(){ return "No dedicated support email is set up yet — for now, reach out through whoever gave you access to SourceVenture."; }
+function docsHtml(){
+  return '<h1>Documentation</h1><p class="legal-updated">How SourceVenture actually works, end to end.</p>' +
+    '<h2>1. Publish a project</h2><p>From the dashboard, click <strong>New Project</strong> and fill in a name, one-line tagline, and a real pitch — the more specific, the better the coach and rating council can work with it. Connecting a public GitHub repo is optional but strongly recommended: we read its description, README, language, and star count (never anything private) and factor that into your rating and coach conversations. Publishing requires a verified email address.</p>' +
+    '<h2>2. The AI coach</h2><p>Every published project gets its own private coach thread, grounded in your actual pitch and repo — not a generic chatbot. Free accounts get ' + FREE_DAILY_CAP + ' coach messages per rolling 24 hours; Pro raises that to ' + PRO_DAILY_CAP + '. Coach conversations are private by default and are never shown to investors.</p>' +
+    '<h2>3. The rating council</h2><p>Clicking "Rate my project" runs three independently-prompted AI judges in parallel — a skeptical VC, a technical due-diligence reviewer, and a growth/traction analyst — then a chairman model synthesizes their scores into one overall number plus per-dimension breakdowns. Scores are deliberately calibrated to be hard to inflate: an early, unremarkable idea should land 35-65, not 90.</p>' +
+    '<h2>4. Business plan (Pro)</h2><p>Pro accounts can generate a full section-by-section AI business plan grounded in the same pitch, repo, and rating data — not a disconnected generic template.</p>' +
+    '<h2>5. Investor directory</h2><p>Gated until the cohort reaches a real threshold on both total users and published projects (see the live countdown on the investors page). Once open, access still requires a manually-approved application — it\'s never automatic. You choose if/when to generate and approve an investor-facing summary of your project; nothing is shown to investors until you explicitly approve it.</p>' +
+    '<h2>6. Notifications</h2><p>Referral milestones, plan changes, and investor-application decisions all show up in the in-app Notifications center (sidebar), not just as a one-time toast you might miss.</p>' +
+    '<h2>Questions this page doesn\'t answer?</h2><p>See <a href="#" onclick="event.preventDefault();nav(\'#/support\');">Support</a>.</p>';
+}
+function supportHtml(){
+  return '<h1>Support</h1><p class="legal-updated">' + escapeHtml(sourceventureContactNote()) + '</p>' +
+    '<h2>Common issues</h2>' +
+    '<h3 style="font-size:15px;margin:18px 0 4px;">"Publishing failed"</h3><p>The most common cause is an unverified email — publishing (not drafting) requires a confirmed address. Check Settings for a "Resend verification email" option, and check spam. The error message now shows the exact reason rather than a generic failure.</p>' +
+    '<h3 style="font-size:15px;margin:18px 0 4px;">"Something went wrong reaching the AI"</h3><p>This means every configured AI provider failed or hit a rate limit at the same moment — rare, and it fails fast (a few seconds), not after a long hang. Try again shortly; if it persists, the account running this instance needs to check its AI provider keys.</p>' +
+    '<h3 style="font-size:15px;margin:18px 0 4px;">Investor directory is locked</h3><p>By design — it opens once the cohort hits a real threshold, shown live on the <a href="#" onclick="event.preventDefault();nav(\'#/investors\');">investors page</a>. Use "Notify me" there to get an email the moment it opens.</p>' +
+    '<h2>Still stuck?</h2><p>See <a href="#" onclick="event.preventDefault();nav(\'#/docs\');">Documentation</a> for how the product works end to end, or reach out through whoever gave you access.</p>';
+}
 async function doLogout(){
   try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include", headers: csrfHeaders() }); }catch(e){}
   clearAuth();
@@ -1429,7 +1530,17 @@ async function saveProject(p){
     headers: Object.assign({ "Content-Type": "application/json" }, csrfHeaders()),
     body: JSON.stringify(p)
   });
-  if(!res.ok) throw new Error("Could not save project");
+  if(!res.ok){
+    // 2026-09-05 (Denis: "publishing failing") — this used to throw a flat
+    // "Could not save project" no matter WHY the save failed, and the
+    // caller's toast then said "Is the backend running?" — actively
+    // misleading for the most common real cause (403 "verify your email
+    // before publishing"), which reads as a backend outage when it's
+    // actually a one-click fix. Surface the server's real detail text.
+    var msg = "Could not save project";
+    try{ var body = await res.json(); if(body && body.detail) msg = typeof body.detail === "string" ? body.detail : msg; }catch(e){}
+    throw new Error(msg);
+  }
   return res.json();
 }
 async function loadProject(id){
@@ -1508,6 +1619,24 @@ async function fetchRepoContext(owner, repo){
   }catch(e){}
   return ctx;
 }
+// 2026-09-05 (Denis: "make sure ai takes in consideration github stars of
+// projects") — fetchRepoContext() above already fetches stars/language/
+// contributors, but the two call sites building the "repoContext" text
+// actually sent to the rating council were only ever including
+// readme/description, silently dropping everything else it fetched. This
+// is the one shared place that turns the full ctx object into the text
+// block the AI actually reads, so stars (and language/contributors) are
+// now always in what the judges see.
+function repoContextToText(ctx){
+  if(!ctx) return "";
+  var lines = [];
+  if(ctx.language) lines.push("Primary language: " + ctx.language);
+  if(typeof ctx.stars === "number") lines.push("GitHub stars: " + ctx.stars);
+  if(typeof ctx.contributors === "number") lines.push("Contributors: " + ctx.contributors);
+  if(ctx.description) lines.push("Repo description: " + ctx.description);
+  if(ctx.readme) lines.push("\nREADME:\n" + ctx.readme);
+  return lines.join("\n");
+}
 
 /* ---------------- analytics (first-party, no third-party tracker) ----------------
    Fire-and-forget: a failed analytics call must never surface to the user
@@ -1529,7 +1658,16 @@ async function callClaude(messages, system, maxTokens){
     method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
-  if(res.status === 503){ throw new Error("NOT_CONFIGURED"); }
+  if(res.status === 503){
+    // 2026-09-05 (Denis: "ai isnt working... fix it once and for all") —
+    // call_llm() on the backend now distinguishes a genuinely-unconfigured
+    // server from every provider just having a bad moment (quota/outage),
+    // sending a different `detail` string for each. This used to collapse
+    // both into the same misleading "not set up" message even when the
+    // key WAS configured and it was really a transient rate limit.
+    var body503 = null; try{ body503 = await res.json(); }catch(e){}
+    throw new Error((body503 && body503.detail === "AI_BUSY") ? "AI_BUSY" : "NOT_CONFIGURED");
+  }
   if(res.status === 429){
     // The backend is the real cap enforcer (10/24h free, 300/24h pro, plus
     // any referral bonus messages) — this can fire even when the client's
@@ -1548,6 +1686,9 @@ async function callClaude(messages, system, maxTokens){
 function friendlyAiError(e){
   if(e && e.message === "NOT_CONFIGURED"){
     return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add GEMINI_API_KEY or ANTHROPIC_API_KEY in backend/.env. This isn't something you can fix by retrying.";
+  }
+  if(e && e.message === "AI_BUSY"){
+    return "The AI is getting a lot of requests right now — this usually clears in under a minute. Try again shortly.";
   }
   if(e && e.message === "RATE_LIMITED"){
     return e.detail || "Daily AI limit reached — try again after it resets.";
@@ -1601,6 +1742,9 @@ const ROUTES = [
   { test:/^#\/summary\/([^\/]+)$/, name:"summary" },
   { test:/^#\/plan\/([^\/]+)$/, name:"plan" },
   { test:/^#\/investors$/, name:"investors" },
+  { test:/^#\/notifications$/, name:"notifications" },
+  { test:/^#\/docs$/, name:"docs" },
+  { test:/^#\/support$/, name:"support" },
   { test:/^#\/settings$/, name:"settings" },
   // Allows an optional ?query (e.g. ?checkout=success from the Stripe
   // redirect) after the tab name without it leaking into the captured
@@ -1659,6 +1803,18 @@ async function router(){
     return;
   }
 
+  // 2026-09-05 (Denis: "add documentation and support and help all
+  // functioning") — both used to be sidenav links that just popped a
+  // "not part of this preview" toast. Real content now, public (no
+  // login needed, same as privacy/terms) since a prospective founder
+  // deciding whether to sign up is exactly who'd want to read these.
+  if(matched.name === "docs" || matched.name === "support"){
+    root.innerHTML = '<div id="landing-nav"><div class="wrap"><a href="#/" class="tb-title">SourceVenture</a>' + themeToggleHtml() + '</div></div>' +
+      '<div class="legal-page">' + (matched.name === "docs" ? docsHtml() : supportHtml()) + '</div>' +
+      '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span class="foot-links"><a href="#" onclick="event.preventDefault();nav(\'#/docs\');">Documentation</a><a href="#" onclick="event.preventDefault();nav(\'#/support\');">Support</a><a href="#" onclick="event.preventDefault();nav(\'#/privacy\');">Privacy</a><a href="#" onclick="event.preventDefault();nav(\'#/terms\');">Terms</a></span></div></footer>';
+    return;
+  }
+
   if(!isLoggedIn()){
     root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
       '<div class="canvas" style="padding-top:100px;text-align:center;">' +
@@ -1683,14 +1839,18 @@ async function router(){
         '<h1 class="page-title">Verify your email to continue</h1>' +
         '<p class="page-sub" style="margin:0 auto 24px;">We sent a link to <strong>' + escapeHtml(STATE.auth.user.email) + '</strong>. Click it, then come back here.</p>' +
         '<div style="display:flex;gap:10px;justify-content:center;"><button class="btn btn-ghost" id="verify-gate-resend" onclick="resendVerificationEmail(this)">Resend email</button><button class="btn btn-primary" onclick="doLogout()">Log out</button></div>' +
+        '<p class="mono muted" style="font-size:11px;margin-top:20px;">This page updates on its own the moment the link is clicked — on this device or any other, no need to refresh.</p>' +
       '</div>';
+    startVerifyGatePoll();
     return;
   }
+  stopVerifyGatePoll();
 
   root.innerHTML = appShellHtml(matched.name);
   var main = $("main");
   main.innerHTML = '<div class="skel" style="height:300px;"></div>';
   markActiveNav(matched.name);
+  refreshNotifBadge();
   try{
     if(matched.name === "dashboard") await renderDashboard(main);
     else if(matched.name === "projects") await renderProjectsList(main);
@@ -1700,6 +1860,7 @@ async function router(){
     else if(matched.name === "summary") await renderSummary(main, param);
     else if(matched.name === "plan") await renderBusinessPlan(main, param);
     else if(matched.name === "investors") await renderInvestors(main);
+    else if(matched.name === "notifications") await renderNotifications(main);
     else if(matched.name === "settings") await renderSettings(main, param || "account");
     else if(matched.name === "admin") await renderAdmin(main);
   }catch(e){
@@ -1722,16 +1883,29 @@ function errorBlock(e){
 // user actually came from, which is what "back" means for a browser-tab
 // app regardless of how they navigated in.
 var BACK_ARROW_ROUTES = ["project", "coach", "summary", "new"];
+// 2026-09-05 (Denis: "dont like the header layout in mobile") — on
+// mobile, the wordmark and "Founder workspace" badge both hide (see CSS)
+// to fit the new hamburger, but that left a dead gap with nothing telling
+// you which page you're actually on (the sidenav's own active-link state
+// is now hidden inside the drawer). This fills that gap with real
+// context instead of just empty space.
+var ROUTE_LABELS = {
+  dashboard:"Overview", projects:"Projects", investors:"Investors", settings:"Settings",
+  admin:"Admin", new:"New Project", coach:"Coach", project:"Project",
+  summary:"Investor Summary", plan:"Business Plan", notifications:"Notifications",
+};
 function appShellHtml(routeName){
   var showBack = BACK_ARROW_ROUTES.indexOf(routeName) !== -1;
   return '<div id="topbar">' +
       '<div class="tb-left">' +
         '<button class="tb-icon tb-hamburger" title="Menu" onclick="toggleSidenav();"><span class="material-symbols-outlined">menu</span></button>' +
-        (showBack ? '<button class="tb-icon" title="Back" onclick="history.back();" style="margin-right:4px;"><span class="material-symbols-outlined">arrow_back</span></button>' : '') + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+        (showBack ? '<button class="tb-icon" title="Back" onclick="history.back();" style="margin-right:4px;"><span class="material-symbols-outlined">arrow_back</span></button>' : '') + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span>' +
+        (ROUTE_LABELS[routeName] ? '<span class="tb-page-label">' + ROUTE_LABELS[routeName] + '</span>' : '') +
+      '</div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
-        '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
-        '<button class="tb-icon" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
+        '<button class="tb-icon tb-sync" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
+        '<button class="tb-icon tb-account" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
       '</div>' +
     '</div>' +
     '<div class="app-layout">' +
@@ -1746,13 +1920,14 @@ function appShellHtml(routeName){
           '<a data-r="dashboard" href="#/dashboard"><span class="material-symbols-outlined">dashboard</span>Overview</a>' +
           '<a data-r="projects" href="#/projects"><span class="material-symbols-outlined">folder</span>Projects</a>' +
           '<a data-r="investors" href="#/investors"><span class="material-symbols-outlined">handshake</span>Investors</a>' +
+          '<a data-r="notifications" href="#/notifications"><span class="material-symbols-outlined">notifications</span>Notifications<span id="sn-notif-badge" class="sn-notif-badge" style="display:none;"></span></a>' +
           '<a data-r="settings" href="#/settings"><span class="material-symbols-outlined">settings</span>Settings</a>' +
           ((STATE.auth && STATE.auth.user && STATE.auth.user.isAdmin) ?
             '<a data-r="admin" href="#/admin"><span class="material-symbols-outlined">shield_person</span>Admin</a>' : '') +
         '</div>' +
         '<div class="sn-foot">' +
-          '<a href="#" onclick="event.preventDefault();showToast(\'Docs are not part of this preview.\');"><span class="material-symbols-outlined" style="font-size:18px;">menu_book</span>Documentation</a>' +
-          '<a href="#" onclick="event.preventDefault();showToast(\'This preview has no live support channel.\');"><span class="material-symbols-outlined" style="font-size:18px;">help_outline</span>Support</a>' +
+          '<a href="#" onclick="event.preventDefault();toggleSidenav(false);nav(\'#/docs\');"><span class="material-symbols-outlined" style="font-size:18px;">menu_book</span>Documentation</a>' +
+          '<a href="#" onclick="event.preventDefault();toggleSidenav(false);nav(\'#/support\');"><span class="material-symbols-outlined" style="font-size:18px;">help_outline</span>Support</a>' +
         '</div>' +
       '</nav>' +
       '<main id="main"></main>' +
@@ -1787,6 +1962,8 @@ function markActiveNav(routeName){
    ============================================================ */
 async function renderLanding(root){
   var published = await loadAllPublishedProjects();
+  var landingStats = await loadPublicStats();
+  var lsUsers = landingStats.totalUsers, lsProjects = published.length;
   root.innerHTML =
   '<nav id="landing-nav"><div class="wrap">' +
     brandHtml(null) +
@@ -1840,7 +2017,18 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="investors-sec"><div class="wrap">' +
-    '<div class="section-head reveal"><div class="eyebrow">Investor directory</div><h2>Opens at real scale, not before.</h2><p>' + published.length + ' / ' + DIRECTORY_THRESHOLD + ' projects published right now. An empty directory hurts trust more than it helps anyone.</p></div>' +
+    '<div class="section-head reveal"><div class="eyebrow">Investor directory</div><h2>Opens at real scale, not before.</h2><p>' + lsProjects + ' / ' + DIRECTORY_THRESHOLD + ' projects published right now. An empty directory hurts trust more than it helps anyone.</p></div>' +
+    // 2026-09-05 (Denis: "investors tab put in home page something small
+    // the bars and shit saying how much projects and users left") —
+    // compact version of the same real progress bars the investors page
+    // shows, so the cohort countdown is visible without leaving the
+    // landing page. Reuses .prog-wrap/.prog-track/.prog-fill as-is.
+    '<div class="reveal" style="max-width:420px;margin:0 auto 22px;transition-delay:.06s;">' +
+      '<div class="prog-wrap"><div class="prog-top"><span>Users</span><span class="now">' + lsUsers + ' / ' + USER_THRESHOLD + ' — ' + Math.max(0, USER_THRESHOLD - lsUsers) + ' left</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (lsUsers/USER_THRESHOLD)*100) + '%;"></div></div></div>' +
+      '<div class="prog-wrap" style="margin-top:10px;"><div class="prog-top"><span>Projects</span><span class="now">' + lsProjects + ' / ' + DIRECTORY_THRESHOLD + ' — ' + Math.max(0, DIRECTORY_THRESHOLD - lsProjects) + ' left</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (lsProjects/DIRECTORY_THRESHOLD)*100) + '%;"></div></div></div>' +
+    '</div>' +
     '<button class="btn btn-ghost reveal" style="transition-delay:.1s;" onclick="nav(\'#/investors\')">View investor portal</button>' +
   '</div></section>' +
 
@@ -2010,7 +2198,7 @@ async function submitNewProject(){
     nav("#/coach/" + project.id);
   }catch(e){
     btn.disabled = false; btn.textContent = "Publish & open my coach";
-    showToast("Publishing failed. Is the backend running? Try again.", true);
+    showToast((e && e.message) || "Publishing failed — try again.", true);
   }
 }
 
@@ -2196,7 +2384,7 @@ async function confirmApplyPitch(){
     COACH.project.pitch = newPitch;
     await saveProject(COACH.project);
     showToast("Pitch updated.");
-  }catch(e){ showToast("Couldn't save the new pitch. Try again.", true); }
+  }catch(e){ showToast((e && e.message) || "Couldn't save the new pitch. Try again.", true); }
 }
 async function requestPitchImprovement(){
   var input = $("coach-input");
@@ -2317,7 +2505,7 @@ async function runRating(id){
   block.innerHTML = '<div class="skel" style="height:70px;"></div><p class="muted" style="font-size:10px;margin-top:6px;">Asking 3 independent judges — takes a few seconds…</p>';
   try{
     if(!COACH.repoCtx && COACH.project){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
-    var repoText = COACH.repoCtx ? (COACH.repoCtx.readme || COACH.repoCtx.description || "") : "";
+    var repoText = repoContextToText(COACH.repoCtx);
     track("rating_requested", id);
     var data = await rateProject(COACH.project, repoText);
     COACH.rating = data;
@@ -2577,7 +2765,7 @@ async function generateBusinessPlan(){
   if(btn){ btn.disabled = true; btn.textContent = "Generating…"; }
   if(el) el.innerHTML = '<div class="skel" style="height:160px;"></div><p class="mono muted" style="font-size:11px;margin-top:10px;">Writing a grounded, section-by-section plan — takes a bit longer than a chat reply…</p>';
   try{
-    var repoText = p.repo ? (p._repoCtxCache && p._repoCtxCache.readme ? p._repoCtxCache.readme.slice(0,4000) : null) : null;
+    var repoText = p.repo && p._repoCtxCache ? repoContextToText(p._repoCtxCache) : null;
     var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/business-plan", {
       method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
       body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoText, problem: p.problem || null, team: p.team || null })
@@ -2610,20 +2798,94 @@ async function loadPublicStats(){
     return { totalUsers: 0, userThreshold: USER_THRESHOLD, publishedProjects: 0, projectThreshold: DIRECTORY_THRESHOLD };
   }
 }
+// 2026-09-05 (Denis: "remove everything active investor related except
+// from the countdown thing with the bars... remove the find the project
+// thing for now") — this page used to also show a "Find your match" AI
+// search tool and the full project directory table/application-status
+// flow, all of which imply a directory that's actually live to browse.
+// Since the cohort isn't open yet, that's more surface than the product
+// can back up right now. Stripped down to just the honest part: the
+// scarcity/countdown card with real progress bars and the notify-me ask.
+// renderDirList/findInvestorMatches/openInvestorApplyModal are left
+// defined below (dead code for now, not deleted) so this is a quick
+// revert once the directory is genuinely ready to reopen.
+/* ============================================================
+   NOTIFICATIONS CENTER
+   ============================================================ */
+// Fire-and-forget, called on every app-shell route render — keeps the
+// sidenav badge in sync with the real server-side unread count without
+// needing a live push channel. Silently no-ops if the badge element isn't
+// in the current DOM (e.g. mid-navigation) or the fetch fails.
+async function refreshNotifBadge(){
+  var badge = $("sn-notif-badge");
+  if(!badge) return;
+  try{
+    var res = await fetch(API_BASE + "/api/notifications", { credentials:"include" });
+    if(!res.ok) return;
+    var data = await res.json();
+    if(data.unread > 0){ badge.textContent = data.unread > 99 ? "99+" : String(data.unread); badge.style.display = "inline-block"; }
+    else { badge.style.display = "none"; }
+  }catch(e){}
+}
+var NOTIF_TYPE_ICON = {
+  referral_milestone: "military_tech", plan_changed: "workspace_premium", investor_decision: "handshake",
+};
+async function renderNotifications(main){
+  main.innerHTML = '<div class="canvas-wide"><div class="skel" style="height:200px;"></div></div>';
+  try{
+    var res = await fetch(API_BASE + "/api/notifications", { credentials:"include" });
+    var data = await res.json();
+    if(!res.ok) throw new Error("Could not load notifications");
+    main.innerHTML = '<div class="canvas-wide">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">' +
+        '<div><div class="eyebrow">Notifications</div><h1 class="page-title">Notifications</h1></div>' +
+        (data.unread > 0 ? '<button class="btn btn-ghost btn-sm" onclick="markAllNotificationsRead()">Mark all as read</button>' : '') +
+      '</div>' +
+      '<p class="page-sub stack-lg">Referral bonuses, plan changes, and investor decisions land here — not just a toast you might miss.</p>' +
+      (data.items.length === 0 ?
+        '<div class="empty-state"><h3>Nothing yet</h3><p>Real activity on your account — referral bonuses, plan changes, investor decisions — will show up here.</p></div>' :
+        '<div class="stack-lg" id="notif-list">' + data.items.map(notificationRowHtml).join("") + '</div>'
+      ) +
+    '</div>';
+  }catch(e){
+    main.innerHTML = errorBlock(e);
+  }
+}
+function notificationRowHtml(n){
+  var icon = NOTIF_TYPE_ICON[n.type] || "notifications";
+  var unread = !n.readAt;
+  return '<div class="card" style="padding:16px 18px;display:flex;gap:14px;align-items:flex-start;' + (unread ? 'border-color:var(--primary);' : '') + '" id="notif-row-' + n.id + '"' +
+    (unread ? ' onclick="markNotificationRead(\'' + n.id + '\')"' : '') + '>' +
+    '<span class="material-symbols-outlined" style="color:' + (unread ? "var(--primary)" : "var(--on-surface-variant)") + ';">' + icon + '</span>' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-weight:600;font-size:14px;">' + escapeHtml(n.title) + (unread ? ' <span class="mono" style="font-size:10px;color:var(--primary);vertical-align:middle;">NEW</span>' : '') + '</div>' +
+      (n.body ? '<p class="muted" style="font-size:13px;margin:4px 0 0;">' + escapeHtml(n.body) + '</p>' : '') +
+      '<div class="mono muted" style="font-size:11px;margin-top:6px;">' + timeAgo(n.createdAt) + '</div>' +
+    '</div>' +
+  '</div>';
+}
+async function markNotificationRead(id){
+  try{
+    await fetch(API_BASE + "/api/notifications/" + encodeURIComponent(id) + "/read", { method:"POST", credentials:"include", headers: csrfHeaders() });
+  }catch(e){}
+  refreshNotifBadge();
+  router();
+}
+async function markAllNotificationsRead(){
+  try{
+    await fetch(API_BASE + "/api/notifications/read-all", { method:"POST", credentials:"include", headers: csrfHeaders() });
+    showToast("All caught up.");
+    router();
+  }catch(e){ showToast("Couldn't mark everything read. Try again.", true); }
+}
+
 async function renderInvestors(main){
   await ensureMe();
   var published = await loadAllPublishedProjects();
   var count = published.length;
   var stats = await loadPublicStats();
   var userCount = stats.totalUsers;
-  // Both real thresholds have to clear — matches the backend's own
-  // enforcement in /api/investors/directory (server-side, not just this
-  // display), so what's shown here can't drift from what's actually gated.
   var open = count >= DIRECTORY_THRESHOLD && userCount >= USER_THRESHOLD;
-  // Real server-side status now (was STATE.me.investorApplied — a
-  // localStorage flag with zero backend enforcement). See
-  // backend/main.py's investor_applications table + /api/investors/* routes.
-  var invStatus = isLoggedIn() ? (await myInvestorStatus()).status : "none";
 
   main.innerHTML = '<div class="canvas-wide">' +
     '<div class="eyebrow">Investors</div><h1 class="page-title">Investor Directory</h1>' +
@@ -2632,7 +2894,7 @@ async function renderInvestors(main){
     '<div class="card scarcity">' +
       '<div class="lock-badge"><span class="material-symbols-outlined" style="color:var(--primary);">' + (open ? "lock_open" : "lock_person") + '</span></div>' +
       '<h2>' + (open ? "Directory Open" : "Opening Soon") + '</h2>' +
-      '<p>' + (open ? "The initial cohort threshold has been reached. Approved investors can browse every published project below." : "The SourceVenture investor portal is highly curated. Access unlocks when the initial cohort reaches our threshold for market viability.") + '</p>' +
+      '<p>' + (open ? "The initial cohort threshold has been reached — we're finishing the review queue before opening access." : "The SourceVenture investor portal is highly curated. Access unlocks when the initial cohort reaches our threshold for market viability.") + '</p>' +
       '<div class="prog-wrap"><div class="prog-top"><span>Cohort Alpha — Users</span><span class="now">' + userCount + ' / ' + USER_THRESHOLD + ' Users</span></div>' +
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (userCount/USER_THRESHOLD)*100) + '%;"></div></div></div>' +
       '<div class="prog-wrap" style="margin-top:12px;"><div class="prog-top"><span>Cohort Alpha — Projects</span><span class="now">' + count + ' / ' + DIRECTORY_THRESHOLD + ' Projects</span></div>' +
@@ -2645,29 +2907,9 @@ async function renderInvestors(main){
         '<p style="font-size:12.5px;margin:0;"><strong>Founding cohort discount</strong> — the first ' + USER_THRESHOLD + ' accounts get <strong>50% off SourceVenture Pro</strong> (locked in until Phase 2). ' +
         (userCount < USER_THRESHOLD ? (USER_THRESHOLD - userCount) + ' spot' + (USER_THRESHOLD - userCount === 1 ? "" : "s") + ' left.' : "This cohort is full — founding pricing has closed.") + '</p>' +
       '</div>' +
-      (invStatus === "approved" ?
-        '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application approved — full access below.</div>' :
-       invStatus === "pending" ?
-        '<div class="mono" style="font-size:11.5px;color:var(--on-surface-variant);">Application pending review — a real queue now, no auto-approval.</div>' :
-        '<button class="btn btn-primary" onclick="' + (open ? "openInvestorApplyModal()" : "openNotifyMeModal()") + '"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>' + (open ? "Apply for access" : "Notify me when access opens") + '</button>') +
+      '<button class="btn btn-primary" style="margin-top:18px;" onclick="openNotifyMeModal()"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>Notify me when access opens</button>' +
     '</div>' +
-
-    '<div class="card stack-lg" style="padding:24px;">' +
-      '<h3 style="font-size:16px;margin-bottom:4px;">Find your match</h3>' +
-      '<p class="muted" style="font-size:13px;margin-bottom:16px;">Describe what you\'re looking to invest in — our AI ranks published projects against it.</p>' +
-      '<div class="field"><label>What are you interested in?</label><textarea id="match-interests" rows="2" placeholder="e.g. developer tools for small teams, early-stage, technical founder"></textarea></div>' +
-      '<div class="field-row">' +
-        '<div class="field"><label>Min amount (USD)</label><input type="number" id="match-min" placeholder="10000" /></div>' +
-        '<div class="field"><label>Max amount (USD)</label><input type="number" id="match-max" placeholder="250000" /></div>' +
-      '</div>' +
-      '<button class="btn btn-primary" id="match-submit" onclick="findInvestorMatches()">Find matches</button>' +
-      '<div id="match-results" style="margin-top:18px;"></div>' +
-    '</div>' +
-
-    '<div id="dir-list"></div>' +
   '</div>';
-
-  renderDirList(published, open, invStatus === "approved");
 }
 
 async function findInvestorMatches(){
@@ -2852,7 +3094,7 @@ async function renderAdmin(main){
       '<div class="card" style="overflow-x:auto;">' +
         '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
           '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
-            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th>' +
+            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th><th style="padding:10px 14px;">Emailable</th>' +
           '</tr></thead><tbody id="admin-users-tbody">' +
           users.map(function(u){
             return '<tr style="border-top:1px solid var(--outline-variant);" id="admin-user-row-' + u.id + '">' +
@@ -2861,6 +3103,11 @@ async function renderAdmin(main){
               '<td style="padding:10px 14px;">' + (u.emailVerified ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);">check_circle</span>' : '<span class="muted">—</span>') + '</td>' +
               '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(u.createdAt * 1000) + '</td>' +
               '<td style="padding:10px 14px;">' + adminPlanCellHtml(u) + '</td>' +
+              // Reflects each user's own signup-time (or later Settings)
+              // choice — opted out means don't send them marketing/update
+              // email, transactional mail (verification, receipts) is
+              // unaffected by this flag.
+              '<td style="padding:10px 14px;">' + (u.emailNotifications ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);" title="Opted in">mark_email_read</span>' : '<span class="material-symbols-outlined muted" style="font-size:16px;" title="Opted out">unsubscribe</span>') + '</td>' +
             '</tr>';
           }).join("") +
           '</tbody></table>' +
@@ -3182,6 +3429,15 @@ function toggleHelpWidget(){
   var panel = $("help-panel");
   HELP_CHAT.open = !HELP_CHAT.open;
   panel.classList.toggle("open", HELP_CHAT.open);
+  // 2026-09-05 (Denis: "support message ui in mobile is a bit weird and
+  // small") — was a small box anchored to the fab's corner, floating
+  // directly over page content with nothing behind it to separate it as
+  // its own layer. On mobile this now becomes a real near-full-screen
+  // sheet with a proper dimmed backdrop (same pattern as the nav
+  // drawer's #sidenav-overlay) — desktop keeps the small corner popup.
+  var backdrop = $("help-backdrop");
+  if(backdrop) backdrop.classList.toggle("show", HELP_CHAT.open);
+  if(window.innerWidth <= 640) document.body.style.overflow = HELP_CHAT.open ? "hidden" : "";
   if(HELP_CHAT.open){
     if(!HELP_CHAT.messages.length){
       loadHelpChat();

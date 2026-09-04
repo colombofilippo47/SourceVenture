@@ -81,6 +81,15 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Two extra free-tier AI fallbacks (2026-09-05, Denis: "always put
+# fallbacks... so always everything working") — both unset by default,
+# quietly skipped in call_llm() above until a real key is added. Groq and
+# OpenRouter both speak the same OpenAI-compatible chat/completions shape
+# Gemini already uses, so no new SDK/request-building code is needed.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
@@ -371,6 +380,25 @@ def init_db():
                 notified_at BIGINT
             )"""
         )
+        # In-app notification center (2026-09-05, Denis: "add notifications
+        # centre as a tab in dashboard") — real per-user rows, not a toast
+        # that vanishes on refresh. Written by create_notification() below
+        # from a handful of real backend events (referral milestone, rating
+        # complete, business plan ready, plan upgraded via Stripe, investor
+        # application decided); read/marked-read via /api/notifications*.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT,
+                project_id TEXT,
+                created_at BIGINT NOT NULL,
+                read_at BIGINT
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, created_at DESC)")
         conn.commit()
     finally:
         conn.close()
@@ -1116,6 +1144,54 @@ def me(current_user=Depends(get_current_user)):
     return current_user
 
 
+# ---------------------------------------------------------- notifications
+@app.get("/api/notifications")
+def list_notifications(current_user=Depends(get_current_user)):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, type, title, body, project_id, created_at, read_at FROM notifications "
+            "WHERE user_id = %s ORDER BY created_at DESC LIMIT 50",
+            (current_user["id"],),
+        ).fetchall()
+        items = [
+            {"id": r[0], "type": r[1], "title": r[2], "body": r[3], "projectId": r[4], "createdAt": r[5], "readAt": r[6]}
+            for r in rows
+        ]
+        unread = sum(1 for i in items if i["readAt"] is None)
+        return {"items": items, "unread": unread}
+    finally:
+        conn.close()
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE notifications SET read_at = %s WHERE id = %s AND user_id = %s AND read_at IS NULL",
+            (int(time.time() * 1000), notification_id, current_user["id"]),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/notifications/read-all")
+def mark_all_notifications_read(current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE notifications SET read_at = %s WHERE user_id = %s AND read_at IS NULL",
+            (int(time.time() * 1000), current_user["id"]),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     avatarDataUrl: Optional[str] = None  # data:image/...;base64,... or "" to remove
@@ -1323,10 +1399,18 @@ def admin_list_users(_admin=Depends(require_admin)):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, email, name, created_at, email_verified, plan FROM users ORDER BY created_at DESC"
+            "SELECT id, email, name, created_at, email_verified, plan, email_notifications FROM users ORDER BY created_at DESC"
         ).fetchall()
         return [
-            {"id": r[0], "email": r[1], "name": r[2], "createdAt": r[3], "emailVerified": bool(r[4]), "plan": r[5] or "free"}
+            {
+                "id": r[0], "email": r[1], "name": r[2], "createdAt": r[3], "emailVerified": bool(r[4]),
+                "plan": r[5] or "free",
+                # 2026-09-05 (Denis: "make sure that adds to the admin page
+                # so i see which ones i can email and which ones not") —
+                # the signup checkbox already wrote this per-user; it just
+                # never surfaced anywhere for Denis to actually read.
+                "emailNotifications": bool(r[6]) if len(r) > 6 and r[6] is not None else True,
+            }
             for r in rows
         ]
     finally:
@@ -1369,13 +1453,20 @@ def admin_decide_investor_application(
     new_status = "approved" if req.action == "approve" else "rejected"
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM investor_applications WHERE id = %s", (application_id,)).fetchone()
+        row = conn.execute("SELECT id, user_id FROM investor_applications WHERE id = %s", (application_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Application not found")
         conn.execute(
             "UPDATE investor_applications SET status = %s, decided_at = %s WHERE id = %s",
             (new_status, int(time.time()), application_id),
         )
+        # A real human decision the applicant is otherwise just left
+        # waiting on with zero feedback until they happen to reload the
+        # investors page themselves.
+        if new_status == "approved":
+            create_notification(conn, row[1], "investor_decision", "Investor application approved", "You now have full access to the investor directory.")
+        else:
+            create_notification(conn, row[1], "investor_decision", "Investor application update", "Your application to the investor directory wasn't approved this round.")
         conn.commit()
         return {"status": new_status}
     finally:
@@ -1476,6 +1567,15 @@ def _set_plan_by_customer_id(customer_id: str, plan: str, subscription_id: Optio
             )
         else:
             conn.execute("UPDATE users SET plan = %s WHERE stripe_customer_id = %s", (plan, customer_id))
+        # Fires from a webhook the user never sees any other side-effect
+        # of, so this is the one honest place to actually tell them their
+        # plan changed.
+        row = conn.execute("SELECT id FROM users WHERE stripe_customer_id = %s", (customer_id,)).fetchone()
+        if row:
+            if plan == "pro":
+                create_notification(conn, row[0], "plan_changed", "You're on SourceVenture Pro", "300 coach messages/24h and the AI business plan generator are now unlocked.")
+            elif plan == "free":
+                create_notification(conn, row[0], "plan_changed", "Your Pro subscription has ended", "You're back on the free plan (10 coach messages/24h). Resubscribe any time from Settings.")
         conn.commit()
     finally:
         conn.close()
@@ -1611,6 +1711,18 @@ def get_project(project_id: str, request: Request):
         conn.close()
 
 
+# In-app notification center (2026-09-05) — one small helper, called from
+# every real event worth telling a founder about. `conn` is the caller's
+# own connection/transaction (never opens a new one), so a notification
+# insert either commits alongside the event that caused it or rolls back
+# with it — never a stray notification for an action that itself failed.
+def create_notification(conn, user_id: str, type_: str, title: str, body: str = "", project_id: Optional[str] = None):
+    conn.execute(
+        "INSERT INTO notifications (id, user_id, type, title, body, project_id, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (secrets.token_hex(12), user_id, type_, title, body, project_id, int(time.time() * 1000)),
+    )
+
+
 def award_referral_milestones_if_earned(conn, published_user_id: str):
     # Rewards are only ever earned for founders who ACTUALLY publish — not
     # empty signups (spec section 18) — which is exactly why this is
@@ -1637,6 +1749,8 @@ def award_referral_milestones_if_earned(conn, published_user_id: str):
         )
         if cur.rowcount:
             log.info("referral milestone 3 awarded to user_id=%s (+50 messages, 5%% one-time discount)", referrer_id)
+            create_notification(conn, referrer_id, "referral_milestone", "3 referrals published — bonus unlocked",
+                                 "+50 coach messages and a one-time 5% Pro discount, both applied automatically.")
     if published_referrals >= 5:
         cur = conn.execute(
             "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining + 100, "
@@ -1645,6 +1759,8 @@ def award_referral_milestones_if_earned(conn, published_user_id: str):
         )
         if cur.rowcount:
             log.info("referral milestone 5 awarded to user_id=%s (+100 messages)", referrer_id)
+            create_notification(conn, referrer_id, "referral_milestone", "5 referrals published — another bonus unlocked",
+                                 "+100 more coach messages, applied automatically.")
     conn.commit()
 
 
@@ -1721,53 +1837,96 @@ async def _try_gemini(system: str, messages: list, max_tokens: int) -> Optional[
     # covers this free provider.
     oa_messages = [{"role": "system", "content": system}] + messages
     # 2026-09-05 (Denis: "something wrong with the ai... make it so that
-    # never happens") — the shared free-tier Gemini key has a hard cap of
-    # 5 requests/minute (confirmed live: a burst of test calls tripped a
-    # real 429 RESOURCE_EXHAUSTED). A rating alone burns 4 calls (3 judges
-    # + chairman), so that ceiling is genuinely tight under real
-    # concurrent use — no code change raises Google's own quota. What this
-    # CAN fix: a transient 429 mid-burst used to fail the whole request
-    # immediately. Now it waits out Google's own suggested retryDelay
-    # (falls back to 15s if the response doesn't include one) and retries
-    # up to twice before giving up — turns "burst of activity failed" into
-    # "burst of activity took a bit longer", covering the overwhelming
-    # majority of real single-user traffic. It can't manufacture quota
-    # that plain doesn't exist under sustained heavy concurrent load.
-    for attempt in range(3):
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                res = await client.post(
-                    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                    headers={"Authorization": f"Bearer {GEMINI_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": GEMINI_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages, "reasoning_effort": "none"},
-                )
-            if res.status_code == 200:
-                content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
-                return content or None
-            if res.status_code == 429 and attempt < 2:
-                delay = 15.0
-                try:
-                    for detail in res.json().get("error", {}).get("details", []):
-                        if detail.get("@type", "").endswith("RetryInfo"):
-                            delay = float(detail["retryDelay"].rstrip("s")) + 1
-                except Exception:  # noqa: BLE001 — malformed error body, just use the default delay
-                    pass
-                log.warning("Gemini 429, retrying in %.1fs (attempt %d/3)", delay, attempt + 1)
-                await asyncio.sleep(min(delay, 45.0))
-                continue
-            log.warning("Gemini HTTP %s: %s", res.status_code, res.text[:300])
-            return None
-        except Exception as e:  # noqa: BLE001 — any transport failure just falls through to the next provider
-            log.warning("Gemini call failed: %s", e)
-            return None
-    return None
+    # never happens") — a PREVIOUS version of this function slept out
+    # Google's own suggested retryDelay (up to 45s, up to twice) on a 429.
+    # That was actively wrong on this deployment target: this endpoint runs
+    # as a Vercel serverless function with a function-execution time limit
+    # far shorter than "up to ~90s of sleeping" — a rating alone fires 3 of
+    # these in parallel, so any real 429 burst reliably blew straight
+    # through the platform's own timeout and came back as a bare 504 with
+    # no JSON body at all, which the frontend can't distinguish from any
+    # other failure — hence "something went wrong reaching the AI" on
+    # every single message. Fixed by failing FAST on 429 instead: return
+    # None immediately so call_llm() below can fall through to the next
+    # configured provider (or the honest, fast, already-well-handled 503)
+    # well inside the platform's time budget. Waiting doesn't meaningfully
+    # help anyway — Google's free-tier cap here is per-minute, and this
+    # request cycle is nowhere near a full minute long.
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                headers={"Authorization": f"Bearer {GEMINI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": GEMINI_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages, "reasoning_effort": "none"},
+            )
+        if res.status_code == 200:
+            content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+            return content or None
+        log.warning("Gemini HTTP %s: %s", res.status_code, res.text[:300])
+        return None
+    except Exception as e:  # noqa: BLE001 — any transport failure just falls through to the next provider
+        log.warning("Gemini call failed: %s", e)
+        return None
+
+
+# Free-tier OpenAI-compatible fallback #1 — same request/response shape as
+# Gemini above, different host/key. Quiet no-op (returns None immediately)
+# until GROQ_API_KEY is actually set, same "present but unset = skipped"
+# pattern as every other optional integration in this file.
+async def _try_groq(system: str, messages: list, max_tokens: int) -> Optional[str]:
+    if not GROQ_API_KEY:
+        return None
+    oa_messages = [{"role": "system", "content": system}] + messages
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={"model": GROQ_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages},
+            )
+        if res.status_code == 200:
+            content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+            return content or None
+        log.warning("Groq HTTP %s: %s", res.status_code, res.text[:300])
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("Groq call failed: %s", e)
+        return None
+
+
+# Free-tier OpenAI-compatible fallback #2 — OpenRouter fronts many free
+# models behind one API; picks whichever OPENROUTER_MODEL is configured
+# (default is a real, currently-free OpenRouter model slug). Same quiet
+# no-op until OPENROUTER_API_KEY is set.
+async def _try_openrouter(system: str, messages: list, max_tokens: int) -> Optional[str]:
+    if not OPENROUTER_API_KEY:
+        return None
+    oa_messages = [{"role": "system", "content": system}] + messages
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json",
+                    "HTTP-Referer": PUBLIC_APP_URL or "https://sourceventure.dev", "X-Title": "SourceVenture",
+                },
+                json={"model": OPENROUTER_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages},
+            )
+        if res.status_code == 200:
+            content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+            return content or None
+        log.warning("OpenRouter HTTP %s: %s", res.status_code, res.text[:300])
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("OpenRouter call failed: %s", e)
+        return None
 
 
 async def _try_anthropic(system: str, messages: list, max_tokens: int) -> Optional[str]:
     if not ANTHROPIC_API_KEY:
         return None
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
@@ -1784,16 +1943,32 @@ async def _try_anthropic(system: str, messages: list, max_tokens: int) -> Option
 
 
 # Gemini (free tier) is the PRIMARY provider for both the coach and the help
-# widget — Anthropic only gets reached as a paid last-resort fallback if
-# GEMINI_API_KEY is ever unset or a call fails. Same "present but unset =
-# skipped" honesty pattern as everywhere else in this codebase.
+# widget. On failure this now falls through a real chain of free/paid
+# fallbacks — Groq, then OpenRouter, then Anthropic — trying each only if
+# its key is actually configured (quiet skip otherwise), so "one provider
+# has a bad minute" doesn't have to mean "the AI is down." Every one of
+# these fails fast (no sleeping) so the whole chain still fits comfortably
+# inside a single serverless request even if several links fail in a row.
 async def call_llm(system: str, messages: list, max_tokens: int = 1200) -> str:
     text = await _try_gemini(system, messages, max_tokens)
+    if text:
+        return text
+    text = await _try_groq(system, messages, max_tokens)
+    if text:
+        return text
+    text = await _try_openrouter(system, messages, max_tokens)
     if text:
         return text
     text = await _try_anthropic(system, messages, max_tokens)
     if text:
         return text
+    if GEMINI_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY or ANTHROPIC_API_KEY:
+        # At least one provider IS configured — this was a real, live
+        # failure (quota/outage), not a missing setup. Distinct detail
+        # string so the frontend can show an honest "temporarily busy, try
+        # again shortly" message instead of the misleading "not set up"
+        # one it shows for the truly-unconfigured case below.
+        raise HTTPException(status_code=503, detail="AI_BUSY")
     raise HTTPException(status_code=503, detail="No AI provider configured or reachable (set GEMINI_API_KEY or ANTHROPIC_API_KEY)")
 
 
@@ -1854,7 +2029,9 @@ COUNCIL = [
                       "Ignore claims with no evidence behind them in the data given."),
     ("growth", "You are a growth/traction analyst. You care about evidence of REAL demand — users, revenue, "
                "engagement, retention — versus a founder merely asserting demand exists. Absence of evidence "
-               "is not proof of demand; say so."),
+               "is not proof of demand; say so. If the repo context below includes a GitHub star count, treat "
+               "it as one real (if partial) traction signal — call out whether it's meaningfully above zero "
+               "for the project's apparent age/category, but don't over-weight a small number either way."),
 ]
 
 RATING_JSON_SHAPE = (
