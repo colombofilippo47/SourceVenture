@@ -220,8 +220,11 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-head-account{text-decoration:none;color:inherit;transition:background-color .2s var(--ease-out-expo);}
 .sn-head-account:hover{background:var(--surface-high);}
 .sn-head h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+.sn-pro-pill{display:inline-block;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.04em;color:#8a6a1a;background:#e8b84b;border-radius:5px;padding:1.5px 5px;margin-left:6px;vertical-align:2px;}
+:root[data-theme="light"] .sn-pro-pill{color:#6b5013;}
 .sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
+.avatar-circle.pro{box-shadow:0 0 0 2px #e8b84b,0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);}
 .sv-brand{display:inline-flex;align-items:center;gap:8px;}
 .sv-mark{flex:none;display:block;width:auto;}
 .sv-mark-light{display:none;}
@@ -712,10 +715,16 @@ function avatarInitials(name){
 function avatarHtml(user, size){
   size = size || 40;
   var style = "width:" + size + "px;height:" + size + "px;font-size:" + Math.round(size * 0.4) + "px;";
+  // 2026-09-05 (Denis: "ui for pro has some differentiation, subtle, like
+  // upgraded") — a thin gold ring around the avatar for plan==='pro',
+  // everywhere avatarHtml renders (sidenav header on every app page,
+  // Settings → Account) rather than a new one-off element. Deliberately
+  // just the ring, no color-scheme change or extra badge — "subtle".
+  var proClass = (user && user.plan === "pro") ? " pro" : "";
   if(user && user.avatarUrl){
-    return '<img class="avatar-circle" style="' + style + '" src="' + escapeHtml(user.avatarUrl) + '" alt="" />';
+    return '<img class="avatar-circle' + proClass + '" style="' + style + '" src="' + escapeHtml(user.avatarUrl) + '" alt="" />';
   }
-  return '<div class="avatar-circle" style="' + style + '">' + escapeHtml(avatarInitials(user && user.name)) + '</div>';
+  return '<div class="avatar-circle' + proClass + '" style="' + style + '">' + escapeHtml(avatarInitials(user && user.name)) + '</div>';
 }
 function escapeHtml(s){
   return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
@@ -1651,7 +1660,9 @@ function appShellHtml(routeName){
     '<div class="app-layout">' +
       '<nav id="sidenav">' +
         '<a href="#/settings" class="sn-head sn-head-account">' + avatarHtml(STATE.auth && STATE.auth.user, 40) +
-          '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") + '</h1><p class="mono">' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.email) || "") + '</p></div></a>' +
+          '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") +
+            ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? '<span class="sn-pro-pill">PRO</span>' : "") +
+          '</h1><p class="mono">' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.email) || "") + '</p></div></a>' +
         '<div class="sn-newbtn"><button class="btn btn-primary btn-block" onclick="nav(\'#/new\')"><span class="material-symbols-outlined" style="font-size:16px;">add</span>New Project</button></div>' +
         '<div class="sn-links">' +
           '<a data-r="dashboard" href="#/dashboard"><span class="material-symbols-outlined">dashboard</span>Overview</a>' +
