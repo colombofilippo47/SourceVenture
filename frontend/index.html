@@ -1477,7 +1477,7 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="pricing-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan.</p></div>' +
+    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan. <strong style="color:var(--primary);">The first ' + USER_THRESHOLD + ' founders get 50% off Pro</strong>, locked in until Phase 2 — see the investor cohort page for the live count.</p></div>' +
     '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
@@ -2160,6 +2160,14 @@ async function renderInvestors(main){
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (userCount/USER_THRESHOLD)*100) + '%;"></div></div></div>' +
       '<div class="prog-wrap" style="margin-top:12px;"><div class="prog-top"><span>Cohort Alpha — Projects</span><span class="now">' + count + ' / ' + DIRECTORY_THRESHOLD + ' Projects</span></div>' +
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (count/DIRECTORY_THRESHOLD)*100) + '%;"></div></div></div>' +
+      // Same cohort, same threshold — the first USER_THRESHOLD accounts
+      // that unlock the investor directory also lock in 50% off Pro until
+      // Phase 2. Real eligibility is tracked server-side at signup
+      // (users.is_founding_member); this is just the promo copy.
+      '<div class="card" style="padding:14px 16px;margin-top:14px;background:var(--accent-glow);border-color:var(--primary);">' +
+        '<p style="font-size:12.5px;margin:0;"><strong>Founding cohort discount</strong> — the first ' + USER_THRESHOLD + ' accounts get <strong>50% off SourceVenture Pro</strong> (locked in until Phase 2). ' +
+        (userCount < USER_THRESHOLD ? (USER_THRESHOLD - userCount) + ' spot' + (USER_THRESHOLD - userCount === 1 ? "" : "s") + ' left.' : "This cohort is full — founding pricing has closed.") + '</p>' +
+      '</div>' +
       (invStatus === "approved" ?
         '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application approved — full access below.</div>' :
        invStatus === "pending" ?
@@ -2477,10 +2485,18 @@ function copyReferralLink(){
   showToast("Referral link copied.");
 }
 function openUpgradeModal(){
+  // Founding-member discount — real server-tracked eligibility
+  // (isFoundingMember, set once at signup), not just a frontend label.
+  var isFounding = !!(STATE.auth && STATE.auth.user && STATE.auth.user.isFoundingMember);
+  var priceHtml = isFounding
+    ? '<span style="text-decoration:line-through;opacity:.5;">$15</span> <strong style="color:var(--primary);">$7.50/mo</strong> — founding member price, locked in until Phase 2'
+    : '$15/mo';
   openModal(
-    '<h3>SourceVenture Pro — $15/mo</h3>' +
+    '<h3>SourceVenture Pro — ' + priceHtml + '</h3>' +
     '<p class="modal-sub">300 coach messages/24h instead of 10, and an AI-generated business plan for this project.</p>' +
-    '<div class="card" style="padding:16px;margin:14px 0;background:var(--surface-highest);"><p class="muted" style="font-size:13px;margin:0;">Payments aren\'t connected yet — Coming soon. Until then, plans are activated manually by the SourceVenture team.</p></div>' +
+    '<p class="muted" style="font-size:12.5px;margin:10px 0 0;">Plus a 15-minute 1:1 coach review call — <em>coming soon</em>.</p>' +
+    '<div class="card" style="padding:16px;margin:14px 0;background:var(--surface-highest);"><p class="muted" style="font-size:13px;margin:0;">Payments aren\'t connected yet — Coming soon. Until then, plans are activated manually by the SourceVenture team.' +
+      (isFounding ? " Your founding-member 50% discount is already locked in and will apply automatically once billing goes live." : "") + '</p></div>' +
     '<div class="modal-actions"><button class="btn btn-ghost btn-block" onclick="closeModal()">Close</button></div>'
   );
 }

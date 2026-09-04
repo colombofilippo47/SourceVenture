@@ -211,6 +211,17 @@ def init_db():
                      "ALTER TABLE users ADD COLUMN referral_code TEXT",
                      "ALTER TABLE users ADD COLUMN referred_by_user_id TEXT",
                      "ALTER TABLE users ADD COLUMN referral_bonus_remaining INTEGER NOT NULL DEFAULT 0",
+                     # Early-founder discount (2026-09): the first
+                     # USER_THRESHOLD signups (same cohort that unlocks the
+                     # investor directory — Denis: "link it to the page that
+                     # says how many users until investors") get 50% off Pro
+                     # once billing exists. Set once at signup based on the
+                     # real count at that moment, not recomputed later, so it
+                     # can never drift if accounts are later deleted. No
+                     # Stripe yet (see plan column above) — this only tracks
+                     # eligibility for now; the actual discounted charge
+                     # still needs wiring up whenever real billing lands.
+                     "ALTER TABLE users ADD COLUMN is_founding_member INTEGER NOT NULL DEFAULT 0",
                      "ALTER TABLE users ADD COLUMN referral_milestone3_awarded INTEGER NOT NULL DEFAULT 0",
                      "ALTER TABLE users ADD COLUMN referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0"):
             try:
@@ -418,6 +429,7 @@ def user_public(row) -> dict:
         "plan": row[5] if len(row) > 5 and row[5] else "free",
         "referralCode": row[6] if len(row) > 6 else None,
         "referralBonusRemaining": row[7] if len(row) > 7 and row[7] is not None else 0,
+        "isFoundingMember": bool(row[8]) if len(row) > 8 else False,
     }
 
 
@@ -553,7 +565,7 @@ def get_current_user(request: Request):
         if not row or row[1] < int(time.time()):
             raise HTTPException(status_code=401, detail="Session expired or invalid")
         user = conn.execute(
-            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining "
+            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member "
             "FROM users WHERE id = ?", (row[0],)
         ).fetchone()
         if not user:
@@ -645,11 +657,16 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
             ref_row = conn.execute("SELECT id FROM users WHERE referral_code = ?", (req.ref,)).fetchone()
             if ref_row:
                 referred_by = ref_row[0]
+        # Founding-member discount eligibility — computed once, right here,
+        # from the real count of accounts that exist BEFORE this insert. See
+        # the is_founding_member column comment in init_db for why.
+        existing_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        is_founding = 1 if existing_users < USER_THRESHOLD else 0
         conn.execute(
             "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, verify_token, "
-            "referral_code, referred_by_user_id) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            "referral_code, referred_by_user_id, is_founding_member) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
             (user_id, req.email, req.name, hash_password(req.password), int(time.time()), verify_token,
-             referral_code, referred_by),
+             referral_code, referred_by, is_founding),
         )
         token = create_session(conn, user_id)
         conn.commit()
@@ -659,7 +676,8 @@ async def signup(req: SignupRequest, request: Request, response: Response, backg
         # start using the app — see README for why) but the account starts
         # unverified; the frontend can show a "verify your email" nudge.
         return {"user": {"id": user_id, "email": req.email, "name": req.name, "emailVerified": False,
-                          "plan": "free", "referralCode": referral_code, "referralBonusRemaining": 0}}
+                          "plan": "free", "referralCode": referral_code, "referralBonusRemaining": 0,
+                          "isFoundingMember": bool(is_founding)}}
     finally:
         conn.close()
 
@@ -1025,7 +1043,7 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
         conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
         conn.commit()
         row = conn.execute(
-            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining "
+            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member "
             "FROM users WHERE id = ?", (current_user["id"],)
         ).fetchone()
         return {"user": user_public(row)}
