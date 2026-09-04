@@ -89,7 +89,11 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+# 2026-09-05: picked live from OpenRouter's actual current free-model
+# catalog (checked via /api/v1/models — free model slugs rotate over
+# time, don't trust an old hardcoded name), tested for clean strict-JSON
+# compliance with reasoning disabled — see _try_openrouter's comment.
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
@@ -1935,7 +1939,20 @@ async def _try_openrouter(system: str, messages: list, max_tokens: int) -> Optio
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json",
                     "HTTP-Referer": PUBLIC_APP_URL or "https://sourceventure.dev", "X-Title": "SourceVenture",
                 },
-                json={"model": OPENROUTER_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages},
+                # 2026-09-05: confirmed live — several free OpenRouter models
+                # (including the default) are reasoning models by default,
+                # which burn a chunk of max_tokens on an internal
+                # "reasoning" field before ever writing the actual answer.
+                # Under a tight max_tokens cap (structured JSON responses
+                # here are capped at 500-1200), that silently truncated the
+                # real content. reasoning:{enabled:false} fixed it in
+                # testing — confirmed the same request drop from ~90
+                # reasoning tokens + truncated content to a clean, fast,
+                # complete JSON reply.
+                json={
+                    "model": OPENROUTER_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages,
+                    "reasoning": {"enabled": False},
+                },
             )
         if res.status_code == 200:
             content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
