@@ -172,6 +172,18 @@ p{margin:0;}
 .blob-1{animation-name:blobFloatCenter;}
 @keyframes blobFloatCenter{0%,100%{transform:translate(-50%,0) rotate(0deg);}50%{transform:translate(-50%,-24px) rotate(1deg);}}
 #root,.overlay,.toast,#help-fab,#help-panel{position:relative;z-index:1;}
+/* 2026-09-05 real bug, caught live via Playwright: #root sits at z-index:1
+   deliberately (regular page content should never cover a modal/cookie-
+   banner/help-widget) — but that same stacking context caps EVERY
+   descendant, including the new mobile nav drawer (#sidenav, z-index:250
+   in its own rule). No descendant z-index, however high, can ever beat a
+   sibling of #root that has a genuinely higher one (.cookie-banner:200,
+   #help-fab/panel:150) — the click on the hamburger, then on a drawer
+   link, both landed on the cookie banner instead. Scoped fix: only
+   while the drawer is actually open (body.sidenav-open, set in
+   toggleSidenav()) does #root's own stacking context rise above those
+   overlays — still below .toast(300), which should always win regardless. */
+body.sidenav-open #root{z-index:210;}
 @media (prefers-reduced-motion:reduce){.blob{animation:none;}}
 .hidden{display:none !important;}
 .material-symbols-outlined{font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24;font-size:20px;line-height:1;}
@@ -196,7 +208,12 @@ p{margin:0;}
 #topbar .tb-left{display:flex;align-items:center;gap:14px;}
 #topbar .tb-title{font-family:var(--font-display);font-size:18px;font-weight:700;}
 #topbar .tb-divider{width:1px;height:16px;background:var(--outline-variant);}
-#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.08em;}
+#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;}
+/* Was wrapping "Founder Workspace" onto 2 lines and crowding the new
+   hamburger button — divider+badge are decorative, safe to drop first;
+   the wordmark follows at the point the hamburger is also present. */
+@media(max-width:640px){#topbar .tb-divider,#topbar .tb-badge{display:none;}}
+@media(max-width:480px){#topbar .sv-wordmark{display:none;}}
 #topbar .tb-right{display:flex;align-items:center;gap:6px;}
 #topbar .tb-icon{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);}
 #topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);transform:scale(1.08);}
@@ -213,7 +230,26 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .app-layout{display:flex;min-height:calc(100vh - var(--topbar-h));}
 #sidenav{width:var(--nav-w);flex:none;border-right:1px solid var(--outline-variant);background:rgba(5,5,6,.4);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;flex-direction:column;position:sticky;top:var(--topbar-h);height:calc(100vh - var(--topbar-h));}
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
-@media(max-width:900px){#sidenav{display:none;}}
+.tb-hamburger{display:none;}
+#sidenav-overlay{display:none;}
+/* Real mobile nav: #sidenav becomes a fixed slide-in drawer (was just
+   `display:none` with nothing built to replace it — no way to reach
+   Projects/Investors/Settings/Admin on a phone at all). Toggled by
+   .tb-hamburger, dismissed by tapping #sidenav-overlay or any nav link. */
+@media(max-width:900px){
+  .tb-hamburger{display:flex;}
+  #sidenav{
+    display:flex;position:fixed;top:0;left:0;height:100vh;width:280px;max-width:82vw;
+    z-index:250;transform:translateX(-100%);transition:transform .28s var(--ease-out-expo);
+    box-shadow:0 0 50px rgba(0,0,0,.5);border-right:none;
+  }
+  #sidenav.open{transform:translateX(0);}
+  #sidenav-overlay{
+    display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:249;
+    opacity:0;pointer-events:none;transition:opacity .28s ease;
+  }
+  #sidenav-overlay.show{opacity:1;pointer-events:auto;}
+}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
 /* Sidebar header is now the account row (avatar + name), not a logo tile —
    the brand mark below lives in the top bar and landing nav instead. */
@@ -241,7 +277,12 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-foot a:hover{color:var(--on-surface);background:var(--surface-high);}
 
 #main{flex:1;min-width:0;padding:48px;}
-@media(max-width:760px){#main{padding:24px 18px;}}
+/* 2026-09-05: bottom padding reserved so the last card on a page never
+   sits directly under #help-fab (fixed, bottom:22px right:22px, 52px —
+   confirmed live on every logged-in page: dashboard's project card,
+   coach's Source Score button, and Settings' Save button were all
+   getting covered by it). */
+@media(max-width:760px){#main{padding:24px 18px 140px 18px;}}
 .canvas{max-width:900px;margin:0 auto;position:relative;}
 /* 2026-08-26, Denis: "behind every text and input... a bit of black/white
    gradient depending on mode so the pixels dont interfere." A soft radial
@@ -479,6 +520,11 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .coach-input-inner textarea{flex:1;background:var(--surface-low);border:1px solid var(--outline-variant);border-radius:var(--radius);padding:11px 14px;color:var(--on-surface);font-size:13.5px;resize:none;min-height:44px;max-height:120px;}
 .coach-side{border-left:1px solid var(--outline-variant);padding:20px 18px;overflow-y:auto;}
 @media(max-width:1000px){.coach-side{border-left:none;border-top:1px solid var(--outline-variant);}}
+/* 2026-09-05: confirmed live — #help-fab (fixed, bottom-right) sat right
+   on top of "Improve my pitch"/"Get my Source Score" here. .coach-side is
+   its own scroll region (not #main's normal flow), so #main's own bottom-
+   padding fix never reached it — needs its own reserved clearance. */
+@media(max-width:760px){.coach-side{padding-bottom:28px;}}
 .coach-side h4{font-family:var(--font-mono);font-size:10.5px;text-transform:uppercase;color:var(--on-surface-variant);letter-spacing:.05em;margin-bottom:10px;}
 .coach-side-block{margin-bottom:22px;}
 .metric-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:12.5px;border-bottom:1px solid var(--outline-variant);}
@@ -616,9 +662,20 @@ input[type="password"]::-webkit-credentials-auto-fill-button{display:none !impor
 
 /* ---------- help widget ---------- */
 #help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(92,148,120,.5),0 6px 24px rgba(92,148,120,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
+/* 2026-09-05: confirmed live (real viewport screenshots, not just full-
+   page) — bottom:22px landed the FAB directly on top of "Save name" on
+   Settings, "Improve my pitch"/"Get my Source Score" on Coach, and the
+   last project card on Dashboard. Padding-bottom on the scroll
+   containers (below) only helps once a page is long enough to scroll
+   past the fold; a short page's last button can still land in this
+   corner on first load. Smaller + higher on mobile clears every
+   confirmed case with real margin to spare. */
+@media(max-width:760px){#help-fab{width:40px;height:40px;bottom:88px;right:14px;}}
+@media(max-width:760px){body.is-coach-route #help-fab,body.is-coach-route #help-panel{display:none;}}
 #help-fab:active{transform:scale(.96);}
 #help-fab:hover{background:var(--primary-bright);}
 #help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
+@media(max-width:760px){#help-panel{bottom:136px;right:14px;max-height:calc(100vh - 220px);}}
 #help-panel.open{display:flex;}
 .cookie-banner{position:fixed;left:22px;right:22px;bottom:22px;max-width:520px;background:var(--surface-lowest);backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:200;display:none;flex-direction:column;gap:12px;}
 .cookie-banner.show{display:flex;}
@@ -626,7 +683,14 @@ input[type="password"]::-webkit-credentials-auto-fill-button{display:none !impor
 .cookie-banner .link{color:var(--primary);text-decoration:underline;}
 .cookie-actions{display:flex;gap:8px;justify-content:flex-end;}
 .btn-sm{padding:7px 14px;font-size:12.5px;border-radius:var(--radius);border:1px solid var(--outline-variant);}
-@media (max-width:520px){.cookie-banner{left:12px;right:12px;bottom:12px;}}
+/* 2026-09-05: was bottom:12px on mobile, same corner as every primary CTA
+   on this app's pages (confirmed live — it sat directly over "Evaluate my
+   idea" on the coach page and other bottom buttons elsewhere). Moved
+   below the topbar on mobile instead (own real bug caught live: placing
+   it at top:12px put it OVER the topbar itself, intercepting clicks on
+   the new hamburger button) — still visible immediately, blocks nothing
+   above or below it. */
+@media (max-width:520px){.cookie-banner{left:12px;right:12px;bottom:auto;top:calc(var(--topbar-h) + 10px);}}
 .help-head{padding:14px 16px;border-bottom:1px solid var(--outline-variant);display:flex;justify-content:space-between;align-items:center;}
 .help-head h4{font-size:13.5px;}
 .help-scroll{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}
@@ -1558,6 +1622,14 @@ async function router(){
   if(!matched) matched = { name:"landing" };
   window.scrollTo(0,0);
   track("page_view", matched.name === "project" || matched.name === "coach" ? param : null);
+  // 2026-09-05: the generic help FAB and the coach page's own AI chat
+  // fight for the same bottom-right corner on a phone (confirmed live —
+  // even after shrinking/repositioning the FAB, its corner still grazed
+  // "Evaluate my idea"). The coach page is the one place a user is
+  // already mid-conversation with an AI they can just ask directly, so
+  // hiding the general-purpose help FAB there (mobile only, see CSS) is
+  // an actual improvement, not just a workaround.
+  document.body.classList.toggle("is-coach-route", matched.name === "coach");
 
   var root = $("root");
   if(matched.name === "landing"){
@@ -1650,7 +1722,9 @@ var BACK_ARROW_ROUTES = ["project", "coach", "summary", "new"];
 function appShellHtml(routeName){
   var showBack = BACK_ARROW_ROUTES.indexOf(routeName) !== -1;
   return '<div id="topbar">' +
-      '<div class="tb-left">' + (showBack ? '<button class="tb-icon" title="Back" onclick="history.back();" style="margin-right:4px;"><span class="material-symbols-outlined">arrow_back</span></button>' : '') + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+      '<div class="tb-left">' +
+        '<button class="tb-icon tb-hamburger" title="Menu" onclick="toggleSidenav();"><span class="material-symbols-outlined">menu</span></button>' +
+        (showBack ? '<button class="tb-icon" title="Back" onclick="history.back();" style="margin-right:4px;"><span class="material-symbols-outlined">arrow_back</span></button>' : '') + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
         '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
@@ -1658,7 +1732,8 @@ function appShellHtml(routeName){
       '</div>' +
     '</div>' +
     '<div class="app-layout">' +
-      '<nav id="sidenav">' +
+      '<div id="sidenav-overlay" onclick="toggleSidenav(false);"></div>' +
+      '<nav id="sidenav" onclick="if(event.target.closest(\'a[data-r]\')) toggleSidenav(false);">' +
         '<a href="#/settings" class="sn-head sn-head-account">' + avatarHtml(STATE.auth && STATE.auth.user, 40) +
           '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") +
             ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? '<span class="sn-pro-pill">PRO</span>' : "") +
@@ -1679,6 +1754,24 @@ function appShellHtml(routeName){
       '</nav>' +
       '<main id="main"></main>' +
     '</div>';
+}
+// 2026-09-05 (Denis: "dashboard and ai uis and header... very unoptimized
+// mobile"): #sidenav was flatly `display:none` under 900px with nothing
+// built to replace it — once logged in on a phone, there was no way to
+// reach Projects/Investors/Settings/Admin at all except editing the URL
+// by hand. Now a real slide-in drawer, toggled by the new hamburger
+// button in the topbar (mobile-only, see .tb-hamburger CSS). Auto-closes
+// on navigating to a different route already (appShellHtml() re-renders
+// #sidenav from scratch, dropping the .open class); the nav delegated
+// onclick above covers the same-route re-click case too.
+function toggleSidenav(force){
+  var sn = $("sidenav"), ov = $("sidenav-overlay");
+  if(!sn || !ov) return;
+  var open = force !== undefined ? force : !sn.classList.contains("open");
+  sn.classList.toggle("open", open);
+  ov.classList.toggle("show", open);
+  document.body.classList.toggle("sidenav-open", open);
+  document.body.style.overflow = open ? "hidden" : "";
 }
 function markActiveNav(routeName){
   document.querySelectorAll("#sidenav a[data-r]").forEach(function(a){
