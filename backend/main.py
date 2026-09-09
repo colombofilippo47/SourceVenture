@@ -288,6 +288,20 @@ def init_db():
                 updated_at INTEGER NOT NULL
             )"""
         )
+        # Stripe hardening (2026-09-05): Stripe retries a webhook delivery
+        # whenever it doesn't get a fast 2xx, so the same event id can (and
+        # does, in practice) arrive more than once. Every handler below is
+        # naturally idempotent on its own (they SET plan, not increment
+        # it) — this table is belt-and-suspenders so a replay is a no-op
+        # logged once, not silently reprocessed, and gives us an audit
+        # trail of what billing state changes actually happened.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                received_at INTEGER NOT NULL
+            )"""
+        )
         conn.commit()
     finally:
         conn.close()
@@ -1116,6 +1130,11 @@ def create_checkout_session(current_user=Depends(get_current_user), _csrf=Depend
                 cancel_url=f"{PUBLIC_APP_URL}/#/settings/plan?checkout=cancel",
                 client_reference_id=current_user["id"],
                 metadata={"user_id": current_user["id"]},
+                # Lets a founder enter a discount/founding-member code on
+                # Stripe's own Checkout page — the coupon/percent-off is
+                # still whatever's configured in the Stripe dashboard under
+                # that promotion code, this just exposes the entry field.
+                allow_promotion_codes=True,
             )
         except stripe.error.StripeError as e:
             log.warning("stripe checkout session creation failed: %s", e)
@@ -1170,6 +1189,24 @@ async def stripe_webhook(request: Request):
     except (ValueError, stripe.error.SignatureVerificationError) as e:
         log.warning("stripe webhook signature verification failed: %s", e)
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    # Idempotency: INSERT ... ON CONFLICT DO NOTHING on the primary key is
+    # atomic, so two workers racing on the same replayed event can't both
+    # think they're first — whichever loses the race sees rowcount 0 and
+    # skips processing instead of re-applying the event.
+    event_id = event["id"]
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO stripe_webhook_events (event_id, event_type, received_at) VALUES (?, ?, ?)",
+            (event_id, event["type"], int(time.time())),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            log.info("stripe webhook event %s already processed, skipping replay", event_id)
+            return {"received": True, "duplicate": True}
+    finally:
+        conn.close()
 
     # event["data"]["object"] is a StripeObject, not a plain dict — it
     # supports [] indexing but not .get(), which raises AttributeError
