@@ -1099,6 +1099,56 @@ def admin_set_user_plan(user_id: str, req: PlanUpdateRequest, _admin=Depends(req
         conn.close()
 
 
+@app.post("/api/admin/users/{user_id}/delete")
+def admin_delete_user(user_id: str, _admin=Depends(require_admin), _csrf=Depends(require_csrf)):
+    # Hard delete, matching this schema's existing style (no soft-delete/
+    # audit-log columns anywhere else in the app, and no legal/compliance
+    # requirement given for keeping a deleted account's data around). Every
+    # table below only ever references a user by a plain TEXT id — SQLite
+    # here has no FOREIGN KEY/ON DELETE CASCADE declared on any of them, so
+    # cleanup across tables has to be done by hand, in dependency order:
+    # rating/business-plan rows (keyed by project_id) before the projects
+    # that own them, then the account-scoped rows, then the user itself.
+    if _admin["id"] == user_id:
+        raise HTTPException(status_code=400, detail="Can't delete your own admin account from here")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id, stripe_customer_id, stripe_subscription_id FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        _, stripe_customer_id, stripe_subscription_id = row
+
+        # Cancel any live subscription first — a deleted account must not
+        # keep getting billed. Best-effort: Stripe being unreachable/the
+        # subscription already gone shouldn't block deleting the account
+        # (it's already not receiving Pro access once the row is gone),
+        # but it is logged loudly so it can be checked by hand.
+        if stripe_subscription_id and STRIPE_SECRET_KEY:
+            try:
+                stripe.Subscription.delete(stripe_subscription_id)
+            except stripe.error.StripeError as e:
+                log.warning("could not cancel subscription %s for deleted user %s: %s", stripe_subscription_id, user_id, e)
+
+        project_ids = [r[0] for r in conn.execute("SELECT id FROM projects WHERE owner_user_id = ?", (user_id,)).fetchall()]
+        for pid in project_ids:
+            conn.execute("DELETE FROM project_ratings WHERE project_id = ?", (pid,))
+            conn.execute("DELETE FROM business_plans WHERE project_id = ?", (pid,))
+        conn.execute("DELETE FROM projects WHERE owner_user_id = ?", (user_id,))
+        conn.execute("DELETE FROM investor_applications WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))  # logs them out everywhere, immediately
+        # Anyone this user referred keeps existing (their own account isn't
+        # touched), but the now-dangling backlink is cleared so a future
+        # milestone-count query doesn't join against a row that no longer
+        # exists — it was only ever used to credit *this* user, who's gone.
+        conn.execute("UPDATE users SET referred_by_user_id = NULL WHERE referred_by_user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        log.info("admin %s deleted user %s (%d projects, stripe_customer=%s)", _admin["id"], user_id, len(project_ids), stripe_customer_id)
+        return {"deleted": True, "projectsRemoved": len(project_ids)}
+    finally:
+        conn.close()
+
+
 # ----------------------------------------------------------------- billing
 # Real Stripe Checkout + a webhook that's the sole normal-path writer of
 # `plan` for any account with a stripe_customer_id. All three routes 503

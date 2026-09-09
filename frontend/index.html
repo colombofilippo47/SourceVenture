@@ -2206,7 +2206,7 @@ async function renderAdmin(main){
       '<div class="card" style="overflow-x:auto;">' +
         '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
           '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
-            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th>' +
+            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th><th style="padding:10px 14px;"></th>' +
           '</tr></thead><tbody id="admin-users-tbody">' +
           users.map(function(u){
             return '<tr style="border-top:1px solid var(--outline-variant);" id="admin-user-row-' + u.id + '">' +
@@ -2215,6 +2215,7 @@ async function renderAdmin(main){
               '<td style="padding:10px 14px;">' + (u.emailVerified ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);">check_circle</span>' : '<span class="muted">—</span>') + '</td>' +
               '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(u.createdAt * 1000) + '</td>' +
               '<td style="padding:10px 14px;">' + adminPlanCellHtml(u) + '</td>' +
+              '<td style="padding:10px 14px;"><button class="btn btn-ghost btn-sm" style="color:var(--error);" onclick="adminConfirmDeleteUser(\'' + u.id + '\',\'' + escapeHtml(u.email).replace(/'/g, "\\'") + '\')">Delete</button></td>' +
             '</tr>';
           }).join("") +
           '</tbody></table>' +
@@ -2287,6 +2288,31 @@ async function adminSetPlan(userId, plan){
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || "Couldn't update plan");
     showToast(plan === "pro" ? "Account upgraded to Pro." : "Account moved back to Free.");
+    renderAdmin($("main"));
+  }catch(e){ showToast(e.message, true); }
+}
+
+// Irreversible — wipes the account, their projects/ratings/business plans,
+// investor application and active sessions, and cancels any live Stripe
+// subscription (see admin_delete_user's docstring in main.py). Two real
+// clicks required: opening this modal, then the modal's own destructive
+// button — no single accidental click can trigger it.
+function adminConfirmDeleteUser(userId, email){
+  openModal(
+    '<h3>Delete ' + escapeHtml(email) + '?</h3>' +
+    '<p class="modal-sub">This permanently removes the account, its projects, ratings, business plan and investor application, and cancels any active Pro subscription. This can\'t be undone.</p>' +
+    '<div class="modal-actions"><button class="btn btn-danger btn-block" onclick="adminDeleteUser(\'' + userId + '\')">Delete account permanently</button><button class="btn btn-ghost btn-block" onclick="closeModal()">Cancel</button></div>'
+  );
+}
+async function adminDeleteUser(userId){
+  try{
+    var res = await fetch(API_BASE + "/api/admin/users/" + userId + "/delete", {
+      method:"POST", credentials:"include", headers: csrfHeaders()
+    });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't delete account");
+    closeModal();
+    showToast("Account deleted (" + data.projectsRemoved + " project(s) removed).");
     renderAdmin($("main"));
   }catch(e){ showToast(e.message, true); }
 }
