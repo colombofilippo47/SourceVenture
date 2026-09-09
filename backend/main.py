@@ -12,8 +12,10 @@ or writes to the shared database — the frontend is a static single-page app
 that talks to these HTTP endpoints. See README.md for the full endpoint list
 and how to run everything locally.
 
-Data model (SQLite, one file: data.db)
----------------------------------------
+Data model (Postgres, via DATABASE_URL — a Supabase free-tier project by
+default; migrated 2026-09-04 off local SQLite so this survives deployment
+to a serverless host with no persistent filesystem)
+---------------------------------------------------------------------------
 - users:    one row per account (email + salted/hashed password)
 - sessions: one row per login, referenced by the `session_token` cookie
 - projects: one row per project, JSON blob in `data` plus a few indexed
@@ -21,15 +23,16 @@ Data model (SQLite, one file: data.db)
 
 Auth
 ----
-Email/password accounts, plus Google Sign-In (OAuth2 authorization-code
-flow, see /api/auth/google/start + /callback — 503s cleanly until
-GOOGLE_CLIENT_ID/SECRET are set; only Denis can create those in Google
-Cloud Console). Passwords are hashed with PBKDF2-HMAC-SHA256 (200k
+Email/password accounts, plus Google and GitHub Sign-In (both OAuth2
+authorization-code flow — see /api/auth/google|github/start + /callback,
+each 503s cleanly until its own CLIENT_ID/SECRET are set; only Denis can
+create those, in Google Cloud Console / github.com/settings/developers
+respectively). Passwords are hashed with PBKDF2-HMAC-SHA256 (200k
 iterations) plus a random salt — never stored or logged in plain text.
 Logging in sets an httpOnly, SameSite=Lax session cookie (`session_token`)
 that identifies a row in `sessions`; JavaScript never reads the token
 directly, which limits the blast radius of an XSS bug. Email verification
-is real (see /api/auth/verify/{token}); Google accounts are auto-verified.
+is real (see /api/auth/verify/{token}); Google/GitHub accounts are auto-verified.
 
 Admin
 -----
@@ -45,21 +48,21 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
-import sqlite3
 import threading
 import time
-from pathlib import Path
 from urllib.parse import urlencode
 from typing import List, Optional
 
 import httpx
+import psycopg
 import stripe
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 load_dotenv()
 
@@ -78,6 +81,19 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Two extra free-tier AI fallbacks (2026-09-05, Denis: "always put
+# fallbacks... so always everything working") — both unset by default,
+# quietly skipped in call_llm() above until a real key is added. Groq and
+# OpenRouter both speak the same OpenAI-compatible chat/completions shape
+# Gemini already uses, so no new SDK/request-building code is needed.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+# 2026-09-05: picked live from OpenRouter's actual current free-model
+# catalog (checked via /api/v1/models — free model slugs rotate over
+# time, don't trust an old hardcoded name), tested for clean strict-JSON
+# compliance with reasoning disabled — see _try_openrouter's comment.
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
@@ -89,22 +105,88 @@ PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost:5500")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/google/callback")
-# Real billing (2026-09-03). Same unset-means-quietly-unavailable pattern
-# as the other third-party keys above — until these are set, the checkout
-# endpoint returns a clean 503 rather than crashing. STRIPE_PRICE_ID is the
-# recurring $15/mo SourceVenture Pro price (not the product id — Checkout
-# needs the price, e.g. price_..., not prod_...). STRIPE_WEBHOOK_SECRET is
-# per-endpoint: Stripe generates a distinct one for whichever URL you add
-# under Developers -> Webhooks, not the same as the secret key.
+# Same pattern, same reasoning — a GitHub OAuth App is free and 1-minute to
+# create (github.com/settings/developers), but still only Denis can create
+# it (needs his own GitHub account). /api/auth/github/start 503s cleanly
+# until these are set.
+GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
+GITHUB_REDIRECT_URI = os.environ.get("GITHUB_REDIRECT_URI", f"{os.environ.get('PUBLIC_API_URL', 'http://localhost:8000')}/api/auth/github/callback")
+# Cloudflare Turnstile (bot check on signup) — free, no card required, and
+# privacy-respecting (no cross-site tracking the way reCAPTCHA does).
+# Same quiet-until-configured pattern as everything else here: with no
+# secret key set, signup just skips the check entirely rather than 500ing
+# or blocking every signup before Denis has a Turnstile site set up.
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+# Real billing (2026-09-03, merged from colombofilippo's
+# integrate/denis-plus-analytics branch 2026-09-05). Same unset-means-
+# quietly-unavailable pattern as the other third-party keys above — until
+# these are set, the checkout endpoint returns a clean 503 rather than
+# crashing. STRIPE_PRICE_ID is the recurring $15/mo SourceVenture Pro
+# price (not the product id — Checkout needs the price, e.g. price_...,
+# not prod_...). STRIPE_WEBHOOK_SECRET is per-endpoint: Stripe generates a
+# distinct one for whichever URL you add under Developers -> Webhooks, not
+# the same as the secret key.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PRICE_ID = os.environ.get("STRIPE_PRICE_ID", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
-DB_PATH = Path(__file__).parent / "data.db"
+
+
+async def verify_turnstile(token: Optional[str], remote_ip: Optional[str]) -> bool:
+    if not TURNSTILE_SECRET_KEY:
+        return True  # not configured yet — don't block signup on it
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(TURNSTILE_VERIFY_URL, data={
+                "secret": TURNSTILE_SECRET_KEY, "response": token, "remoteip": remote_ip or "",
+            })
+            return bool(res.json().get("success"))
+    except httpx.HTTPError as e:
+        log.warning("turnstile verify call failed: %s", e)
+        return False  # fail closed — a Cloudflare outage shouldn't be treated as "human"
+# 2026-09-04: migrated off local SQLite (data.db) to Postgres (Supabase,
+# free tier) — Denis: "i need the free host... a host with no limits like
+# vercel... deploy everything". SQLite's file couldn't survive Vercel's
+# ephemeral serverless filesystem; a real remote Postgres can. Every
+# get_db()/init_db() connection below is a fresh, short-lived one (matches
+# a serverless function's own request-scoped lifecycle) through Supabase's
+# transaction-mode pgbouncer pooler — prepare_threshold=None disables
+# psycopg's server-side prepared statements, which don't survive being
+# routed to a different backend connection between transactions under
+# transaction-mode pooling.
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def db_connect():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is not set — see .env.example")
+    return psycopg.connect(DATABASE_URL, prepare_threshold=None)
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 PBKDF2_ITERATIONS = 200_000
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+# 2026-09-05 (real bug, found via a live browser test — every httpx/curl
+# test all day masked this because those hit api.sourceventure.dev
+# directly, never simulating a real browser's cross-subdomain cookie
+# visibility): the CSRF cookie is deliberately non-httpOnly so frontend JS
+# can read it via document.cookie and echo it back as a header (see
+# require_csrf below). Without an explicit Domain, FastAPI/Starlette sets
+# it host-only for whichever host issued it — api.sourceventure.dev in
+# prod. document.cookie on the FRONTEND's origin (sourceventure.dev, a
+# sibling subdomain, not a parent/child of api.sourceventure.dev) can
+# never see a cookie scoped that narrowly, so csrfHeaders() on the real
+# frontend always came back empty and every state-changing request
+# (publish, rate, coach, settings, notifications, admin, billing) 403'd
+# with "Missing or invalid CSRF token" for every real user — silently,
+# since local dev never hits this (localhost cookies aren't port-scoped,
+# so it "worked" there by accident). Set COOKIE_DOMAIN=.sourceventure.dev
+# in prod so the cookie is visible on the whole domain family; leave unset
+# for local dev (host-only there is correct and this is a no-op then).
+COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", "") or None
 COOKIE_NAME = "session_token"
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "x-csrf-token"
@@ -148,12 +230,11 @@ async def security_headers(request: Request, call_next):
 def init_db():
     # Schema creation used to run inline in get_db(), i.e. on EVERY request —
     # every signup, login, project fetch, coach message, etc. paid for 4x
-    # "CREATE TABLE IF NOT EXISTS" plus 2 probe "ALTER TABLE" statements
-    # (the latter relying on catching sqlite3.OperationalError since SQLite
-    # has no "ADD COLUMN IF NOT EXISTS") before doing any real work. None of
-    # that is conditional on anything changing between requests, so it now
-    # runs exactly once at process startup instead.
-    conn = sqlite3.connect(DB_PATH)
+    # "CREATE TABLE IF NOT EXISTS" plus a batch of "ADD COLUMN IF NOT
+    # EXISTS" statements before doing any real work. None of that is
+    # conditional on anything changing between requests, so it now runs
+    # exactly once at process startup instead.
+    conn = db_connect()
     try:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS users (
@@ -161,61 +242,81 @@ def init_db():
                 email TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
+                created_at BIGINT NOT NULL,
                 email_verified INTEGER NOT NULL DEFAULT 0,
                 verify_token TEXT
             )"""
         )
-        # SQLite has no "ADD COLUMN IF NOT EXISTS" — this only matters for a
-        # data.db created before email verification/Google sign-in/avatars
-        # existed; a fresh DB already has every column from the CREATE TABLE
-        # above and these no-op.
-        for stmt in ("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN verify_token TEXT",
-                     "ALTER TABLE users ADD COLUMN avatar_data_url TEXT",
-                     "ALTER TABLE users ADD COLUMN google_id TEXT",
-                     "ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'password'",
+        # Postgres (unlike SQLite) supports "ADD COLUMN IF NOT EXISTS"
+        # natively — this only matters for a database created before email
+        # verification/Google sign-in/avatars existed; a fresh DB already
+        # has every column from the CREATE TABLE above and these no-op.
+        # (2026-09-04: migrated off SQLite's try/except-OperationalError
+        # dance, which this native IF NOT EXISTS replaces outright.)
+        for stmt in ("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data_url TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS github_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password'",
                      # First Drop (2026-09-02): Free/Pro plan — 'plan' is the
                      # only source of truth for gating (coach limit, business
                      # plan access). No Stripe yet: an admin flips this
                      # manually via POST /api/admin/users/{id}/plan until
                      # real billing is connected — see that endpoint's
                      # docstring for why this is deliberately temporary.
-                     "ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'free'",
                      # Referral program: a short public code every user has
                      # (shared as a signup link), who referred them, a simple
                      # bonus-message counter (NOT a credit system — one plain
                      # integer, decremented one at a time once the daily cap
                      # is hit), and two one-shot flags so the 3-referral and
                      # 5-referral rewards can never be double-awarded.
-                     "ALTER TABLE users ADD COLUMN referral_code TEXT",
-                     "ALTER TABLE users ADD COLUMN referred_by_user_id TEXT",
-                     "ALTER TABLE users ADD COLUMN referral_bonus_remaining INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN referral_milestone3_awarded INTEGER NOT NULL DEFAULT 0",
-                     "ALTER TABLE users ADD COLUMN referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0",
-                     # Real billing (2026-09-03) — set once a Checkout session
-                     # completes; the webhook is the only writer of `plan`
-                     # from here on for accounts with a stripe_customer_id
-                     # (the manual admin toggle stays available for accounts
-                     # that were never through Stripe).
-                     "ALTER TABLE users ADD COLUMN stripe_customer_id TEXT",
-                     "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"):
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError:
-                pass
-        # Partial unique index (SQLite has no ADD CONSTRAINT) — only enforces
-        # uniqueness where google_id is actually set, so it doesn't collide
-        # on the many NULL values from password-only accounts.
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by_user_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_bonus_remaining INTEGER NOT NULL DEFAULT 0",
+                     # Early-founder discount (2026-09): the first
+                     # USER_THRESHOLD signups (same cohort that unlocks the
+                     # investor directory — Denis: "link it to the page that
+                     # says how many users until investors") get 50% off Pro
+                     # once billing exists. Set once at signup based on the
+                     # real count at that moment, not recomputed later, so it
+                     # can never drift if accounts are later deleted.
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_founding_member INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_milestone3_awarded INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_milestone5_awarded INTEGER NOT NULL DEFAULT 0",
+                     # One-time 5% Pro discount for referrers (2026-09-04,
+                     # Denis: "gets more usage and a 5% discount one time
+                     # only in subscription") — stacks additively with the
+                     # founding-member 50% (both are just percentages off
+                     # the $15 base), awarded alongside the first referral
+                     # milestone since that flag already guarantees it can
+                     # only ever fire once.
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_discount_pct INTEGER NOT NULL DEFAULT 0",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_notifications INTEGER NOT NULL DEFAULT 1",
+                     # Real billing (2026-09-03, merged from colombofilippo's
+                     # branch 2026-09-05) — set once a Checkout session
+                     # completes; the webhook is the sole normal-path writer
+                     # of `plan` from here on for accounts with a
+                     # stripe_customer_id (the manual admin toggle stays
+                     # available for accounts that were never through Stripe,
+                     # or for comping Pro without a real subscription).
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT",
+                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT"):
+            conn.execute(stmt)
+        # Partial unique indexes — only enforce uniqueness where the column
+        # is actually set, so they don't collide on the many NULL values
+        # from accounts that never went through that particular flow.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL
+                created_at BIGINT NOT NULL,
+                expires_at BIGINT NOT NULL
             )"""
         )
         conn.execute(
@@ -223,8 +324,8 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT,
                 status TEXT NOT NULL,
-                published_at INTEGER,
-                updated_at INTEGER NOT NULL,
+                published_at BIGINT,
+                updated_at BIGINT NOT NULL,
                 data TEXT NOT NULL
             )"""
         )
@@ -243,8 +344,8 @@ def init_db():
                 name TEXT NOT NULL,
                 firm TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
-                created_at INTEGER NOT NULL,
-                decided_at INTEGER
+                created_at BIGINT NOT NULL,
+                decided_at BIGINT
             )"""
         )
         # Server-side rating storage — was localStorage-only before, which
@@ -260,7 +361,7 @@ def init_db():
                 biggest_risk TEXT,
                 improvements TEXT NOT NULL,
                 judges INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at BIGINT NOT NULL
             )"""
         )
         # First-party analytics. Deliberately minimal and privacy-preserving:
@@ -270,10 +371,10 @@ def init_db():
         # to honour by simply never collecting it than by deleting it later.
         conn.execute(
             """CREATE TABLE IF NOT EXISTS analytics_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 project_id TEXT,
-                created_at INTEGER NOT NULL
+                created_at BIGINT NOT NULL
             )"""
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_analytics_name_time ON analytics_events (name, created_at)")
@@ -285,7 +386,7 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS business_plans (
                 project_id TEXT PRIMARY KEY,
                 content TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at BIGINT NOT NULL
             )"""
         )
         # Stripe hardening (2026-09-05): Stripe retries a webhook delivery
@@ -299,9 +400,41 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS stripe_webhook_events (
                 event_id TEXT PRIMARY KEY,
                 event_type TEXT NOT NULL,
-                received_at INTEGER NOT NULL
+                received_at BIGINT NOT NULL
             )"""
         )
+        # 2026-09-04 (Denis: "make it the notificate me button works") — a
+        # deliberately lighter-weight sibling to investor_applications: no
+        # login, no name/firm, just "email me when the directory opens".
+        # The real investor-apply flow (name+firm, requires an account) is
+        # unchanged and still gates actual directory access.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS directory_notify_signups (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                created_at BIGINT NOT NULL,
+                notified_at BIGINT
+            )"""
+        )
+        # In-app notification center (2026-09-05, Denis: "add notifications
+        # centre as a tab in dashboard") — real per-user rows, not a toast
+        # that vanishes on refresh. Written by create_notification() below
+        # from a handful of real backend events (referral milestone, rating
+        # complete, business plan ready, plan upgraded via Stripe, investor
+        # application decided); read/marked-read via /api/notifications*.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT,
+                project_id TEXT,
+                created_at BIGINT NOT NULL,
+                read_at BIGINT
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, created_at DESC)")
         conn.commit()
     finally:
         conn.close()
@@ -313,7 +446,7 @@ def _on_startup():
 
 
 def get_db():
-    return sqlite3.connect(DB_PATH)
+    return db_connect()
 
 
 # ------------------------------------------------------------- rate limiting
@@ -373,7 +506,7 @@ def consume_coach_allowance(current_user: dict):
         try:
             cur = conn.execute(
                 "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining - 1 "
-                "WHERE id = ? AND referral_bonus_remaining > 0",
+                "WHERE id = %s AND referral_bonus_remaining > 0",
                 (current_user["id"],),
             )
             conn.commit()
@@ -419,6 +552,9 @@ def user_public(row) -> dict:
         "plan": row[5] if len(row) > 5 and row[5] else "free",
         "referralCode": row[6] if len(row) > 6 else None,
         "referralBonusRemaining": row[7] if len(row) > 7 and row[7] is not None else 0,
+        "isFoundingMember": bool(row[8]) if len(row) > 8 else False,
+        "referralDiscountPct": row[9] if len(row) > 9 and row[9] else 0,
+        "emailNotifications": bool(row[10]) if len(row) > 10 else True,
     }
 
 
@@ -436,7 +572,9 @@ def set_session_cookie(response: Response, token: str):
     # has to read it to echo it back as a header). SameSite=Lax already
     # blocks the cookie from riding along on a cross-site POST, but this is
     # real defense-in-depth, and costs nothing once wired through (see
-    # require_csrf below + the frontend's csrfHeaders() helper).
+    # require_csrf below + the frontend's csrfHeaders() helper). domain=
+    # COOKIE_DOMAIN so it's actually readable by JS on the frontend's own
+    # origin, not just api.sourceventure.dev — see COOKIE_DOMAIN's comment.
     response.set_cookie(
         key=CSRF_COOKIE_NAME,
         value=secrets.token_urlsafe(24),
@@ -445,6 +583,7 @@ def set_session_cookie(response: Response, token: str):
         secure=COOKIE_SECURE,
         samesite="lax",
         path="/",
+        domain=COOKIE_DOMAIN,
     )
 
 
@@ -453,6 +592,38 @@ def require_csrf(request: Request):
     header_val = request.headers.get(CSRF_HEADER_NAME)
     if not cookie_val or not header_val or not hmac.compare_digest(cookie_val, header_val):
         raise HTTPException(status_code=403, detail="Missing or invalid CSRF token")
+
+
+PASSWORD_COMPLEXITY_RE_UPPER = re.compile(r"[A-Z]")
+PASSWORD_COMPLEXITY_RE_LOWER = re.compile(r"[a-z]")
+PASSWORD_COMPLEXITY_RE_DIGIT = re.compile(r"\d")
+PASSWORD_COMPLEXITY_RE_SPECIAL = re.compile(r"[^A-Za-z0-9]")
+
+
+def validate_password_strength(password: str) -> str:
+    # 2026-09-04 tightened (Denis: "make sure the password thing is decently
+    # strict") — was letter+digit only. Now requires upper+lower+digit+
+    # special and a 10-char floor (SignupRequest.password still carries the
+    # hard min_length=8/max_length=200 field bounds; this raises first with
+    # a clearer message for the 8-9 char case).
+    if len(password) < 10:
+        raise ValueError("Password must be at least 10 characters")
+    if (
+        not PASSWORD_COMPLEXITY_RE_UPPER.search(password)
+        or not PASSWORD_COMPLEXITY_RE_LOWER.search(password)
+        or not PASSWORD_COMPLEXITY_RE_DIGIT.search(password)
+        or not PASSWORD_COMPLEXITY_RE_SPECIAL.search(password)
+    ):
+        raise ValueError("Password must contain an uppercase letter, a lowercase letter, a number, and a symbol")
+    if password.lower() in _COMMON_WEAK_PASSWORDS:
+        raise ValueError("That password is too common — pick something less guessable")
+    return password
+
+
+_COMMON_WEAK_PASSWORDS = {
+    "password1", "password123", "12345678", "123456789", "1234567890",
+    "qwertyui", "qwerty123", "letmein1", "welcome1", "abc123456", "iloveyou1",
+}
 
 
 # ------------------------------------------------------------------- models
@@ -464,11 +635,31 @@ class SignupRequest(BaseModel):
     # unknown/malformed code is silently ignored rather than erroring, so a
     # stale or copy-pasted-wrong link never blocks account creation.
     ref: Optional[str] = Field(default=None, max_length=32)
+    # Cloudflare Turnstile response token — required only once
+    # TURNSTILE_SECRET_KEY is actually set (see verify_turnstile below);
+    # None/missing is fine until then so this doesn't brick signup before
+    # Denis creates a Turnstile site.
+    turnstileToken: Optional[str] = Field(default=None, max_length=4000)
+    # Opt-in checkbox at signup (Denis: "make sure people select get
+    # notifications in email when create account and can change that in
+    # settings") — defaults on so existing behavior (verification email,
+    # etc.) is unaffected if the frontend ever omits the field; changeable
+    # later via PUT /api/auth/profile.
+    emailNotifications: bool = True
+
+    _validate_password = field_validator("password")(validate_password_strength)
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=200)
+
+
+# Same data-URL-in-JSON approach as the user avatar (MAX_AVATAR_BYTES,
+# further down) — logo is small/square so gets the same cap; banner is
+# wide so gets a bit more room.
+MAX_PROJECT_LOGO_BYTES = 600_000
+MAX_PROJECT_BANNER_BYTES = 1_500_000
 
 
 class ProjectIn(BaseModel):
@@ -492,6 +683,18 @@ class ProjectIn(BaseModel):
     category: Optional[str] = Field(default=None, max_length=80)
     problem: Optional[str] = Field(default=None, max_length=2000)
     team: Optional[str] = Field(default=None, max_length=2000)
+    # Project logo/banner (Denis: "build the banner thing") — same
+    # data-URL-in-the-JSON-blob approach as the user avatar, just two more
+    # fields on the project. "" clears it (same convention as avatarDataUrl).
+    logoDataUrl: Optional[str] = Field(default=None, max_length=MAX_PROJECT_LOGO_BYTES)
+    bannerDataUrl: Optional[str] = Field(default=None, max_length=MAX_PROJECT_BANNER_BYTES)
+
+    @field_validator("logoDataUrl", "bannerDataUrl")
+    @classmethod
+    def _validate_image_data_url(cls, v):
+        if v and v != "" and not v.startswith("data:image/"):
+            raise ValueError("must be a data:image/... URL")
+        return v
 
     class Config:
         extra = "allow"
@@ -520,13 +723,13 @@ def get_current_user(request: Request):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT user_id, expires_at FROM sessions WHERE token = ?", (token,)
+            "SELECT user_id, expires_at FROM sessions WHERE token = %s", (token,)
         ).fetchone()
         if not row or row[1] < int(time.time()):
             raise HTTPException(status_code=401, detail="Session expired or invalid")
         user = conn.execute(
-            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining "
-            "FROM users WHERE id = ?", (row[0],)
+            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member, referral_discount_pct, email_notifications "
+            "FROM users WHERE id = %s", (row[0],)
         ).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
@@ -545,7 +748,7 @@ def create_session(conn, user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
     conn.execute(
-        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (%s, %s, %s, %s)",
         (token, user_id, now, now + SESSION_TTL_SECONDS),
     )
     return token
@@ -600,11 +803,13 @@ async def send_verification_email(email: str, name: str, verify_token: str):
 
 
 @app.post("/api/auth/signup")
-def signup(req: SignupRequest, request: Request, response: Response, background_tasks: BackgroundTasks):
+async def signup(req: SignupRequest, request: Request, response: Response, background_tasks: BackgroundTasks):
     check_rate_limit("signup", client_ip(request), limit=5, window_seconds=600)
+    if not await verify_turnstile(req.turnstileToken, client_ip(request)):
+        raise HTTPException(status_code=400, detail="Bot check failed — please try again")
     conn = get_db()
     try:
-        existing = conn.execute("SELECT id FROM users WHERE email = ?", (req.email,)).fetchone()
+        existing = conn.execute("SELECT id FROM users WHERE email = %s", (req.email,)).fetchone()
         if existing:
             raise HTTPException(status_code=409, detail="An account with this email already exists")
         user_id = secrets.token_hex(12)
@@ -612,14 +817,20 @@ def signup(req: SignupRequest, request: Request, response: Response, background_
         referral_code = secrets.token_urlsafe(6)
         referred_by = None
         if req.ref:
-            ref_row = conn.execute("SELECT id FROM users WHERE referral_code = ?", (req.ref,)).fetchone()
+            ref_row = conn.execute("SELECT id FROM users WHERE referral_code = %s", (req.ref,)).fetchone()
             if ref_row:
                 referred_by = ref_row[0]
+        # Founding-member discount eligibility — computed once, right here,
+        # from the real count of accounts that exist BEFORE this insert. See
+        # the is_founding_member column comment in init_db for why.
+        existing_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        is_founding = 1 if existing_users < USER_THRESHOLD else 0
         conn.execute(
             "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, verify_token, "
-            "referral_code, referred_by_user_id) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
+            "referral_code, referred_by_user_id, is_founding_member, email_notifications) "
+            "VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s)",
             (user_id, req.email, req.name, hash_password(req.password), int(time.time()), verify_token,
-             referral_code, referred_by),
+             referral_code, referred_by, is_founding, 1 if req.emailNotifications else 0),
         )
         token = create_session(conn, user_id)
         conn.commit()
@@ -629,7 +840,9 @@ def signup(req: SignupRequest, request: Request, response: Response, background_
         # start using the app — see README for why) but the account starts
         # unverified; the frontend can show a "verify your email" nudge.
         return {"user": {"id": user_id, "email": req.email, "name": req.name, "emailVerified": False,
-                          "plan": "free", "referralCode": referral_code, "referralBonusRemaining": 0}}
+                          "plan": "free", "referralCode": referral_code, "referralBonusRemaining": 0,
+                          "isFoundingMember": bool(is_founding), "referralDiscountPct": 0,
+                          "emailNotifications": bool(req.emailNotifications)}}
     finally:
         conn.close()
 
@@ -638,10 +851,10 @@ def signup(req: SignupRequest, request: Request, response: Response, background_
 def verify_email(token: str):
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM users WHERE verify_token = ?", (token,)).fetchone()
+        row = conn.execute("SELECT id FROM users WHERE verify_token = %s", (token,)).fetchone()
         if not row:
             raise HTTPException(status_code=400, detail="Invalid or already-used verification link")
-        conn.execute("UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?", (row[0],))
+        conn.execute("UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = %s", (row[0],))
         conn.commit()
         return {"ok": True}
     finally:
@@ -661,7 +874,7 @@ def resend_verification(request: Request, background_tasks: BackgroundTasks, cur
     conn = get_db()
     try:
         verify_token = secrets.token_urlsafe(24)
-        conn.execute("UPDATE users SET verify_token = ? WHERE id = ?", (verify_token, current_user["id"]))
+        conn.execute("UPDATE users SET verify_token = %s WHERE id = %s", (verify_token, current_user["id"]))
         conn.commit()
         background_tasks.add_task(send_verification_email, current_user["email"], current_user["name"], verify_token)
         return {"ok": True}
@@ -680,7 +893,7 @@ def login(req: LoginRequest, request: Request, response: Response):
     try:
         row = conn.execute(
             "SELECT id, email, name, password_hash, email_verified, plan, referral_code, referral_bonus_remaining "
-            "FROM users WHERE email = ?", (req.email,)
+            "FROM users WHERE email = %s", (req.email,)
         ).fetchone()
         if not row or not verify_password(req.password, row[3]):
             log.info("failed login attempt for email=%s", req.email)
@@ -714,17 +927,13 @@ GOOGLE_STATE_COOKIE = "google_oauth_state"
 
 
 @app.get("/api/auth/google/start")
-def google_start(response: Response):
+def google_start():
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         # Honest failure, not a broken redirect to a client_id-less Google
         # URL — matches this file's existing pattern for unset third-party
         # keys (see send_verification_email's RESEND_API_KEY check).
         raise HTTPException(status_code=503, detail="Google sign-in isn't configured yet")
     state = secrets.token_urlsafe(24)
-    response.set_cookie(
-        key=GOOGLE_STATE_COOKIE, value=state, max_age=600, httponly=True,
-        secure=COOKIE_SECURE, samesite="lax", path="/",
-    )
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -733,7 +942,23 @@ def google_start(response: Response):
         "state": state,
         "prompt": "select_account",
     }
-    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    redirect = RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+    # 2026-09-05 real bug fix (Denis: "google sign in... link expire[d]...
+    # every time"): this cookie used to be set on the `response: Response`
+    # FastAPI injects for exactly this purpose — but the function was
+    # RETURNING a separate, brand-new RedirectResponse instead of that
+    # injected one. FastAPI/Starlette only sends headers/cookies that live
+    # on the object actually returned; whatever was set on the injected
+    # `response` was silently discarded. Confirmed live: /start never sent
+    # a Set-Cookie at all, so /callback always saw no state cookie and
+    # always failed with "state_mismatch" — not a real expiry, every
+    # single attempt failed this way. Set the cookie directly on the
+    # response being returned instead.
+    redirect.set_cookie(
+        key=GOOGLE_STATE_COOKIE, value=state, max_age=600, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    return redirect
 
 
 @app.get("/api/auth/google/callback")
@@ -781,16 +1006,16 @@ async def google_callback(request: Request, response: Response, code: str = "", 
 
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE google_id = ?", (google_id,)).fetchone()
+        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE google_id = %s", (google_id,)).fetchone()
         if not row:
             # Not linked by google_id yet — check for an existing
             # password-account with the same email and link it (Google has
             # already verified this email, so this isn't a spoofing risk
             # the way an unverified claim would be), rather than creating a
             # second, confusing duplicate account.
-            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = ?", (email,)).fetchone()
+            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = %s", (email,)).fetchone()
             if existing:
-                conn.execute("UPDATE users SET google_id = ?, email_verified = 1 WHERE id = ?", (google_id, existing[0]))
+                conn.execute("UPDATE users SET google_id = %s, email_verified = 1 WHERE id = %s", (google_id, existing[0]))
                 row = (existing[0], existing[1], existing[2], 1)
             else:
                 user_id = secrets.token_hex(12)
@@ -801,7 +1026,7 @@ async def google_callback(request: Request, response: Response, code: str = "", 
                 random_password_hash = hash_password(secrets.token_urlsafe(32))
                 conn.execute(
                     "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, google_id, auth_provider) "
-                    "VALUES (?, ?, ?, ?, ?, 1, ?, 'google')",
+                    "VALUES (%s, %s, %s, %s, %s, 1, %s, 'google')",
                     (user_id, email, name, random_password_hash, int(time.time()), google_id),
                 )
                 row = (user_id, email, name, 1)
@@ -817,17 +1042,143 @@ async def google_callback(request: Request, response: Response, code: str = "", 
     return redirect
 
 
+# --------------------------------------------------------------- GitHub SSO
+# Same manual OAuth2 flow as Google above, same reasoning. Two real
+# GitHub-specific wrinkles Google doesn't have:
+#  - the token endpoint returns form-encoded by default; Accept: application/
+#    json is required to get JSON back.
+#  - GET /user often omits `email` (private-by-default on GitHub) even
+#    though the userinfo call itself succeeds — falls back to GET
+#    /user/emails and picks the verified primary, same as any real GitHub
+#    OAuth integration has to.
+GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
+GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
+GITHUB_USER_URL = "https://api.github.com/user"
+GITHUB_EMAILS_URL = "https://api.github.com/user/emails"
+GITHUB_STATE_COOKIE = "github_oauth_state"
+
+
+@app.get("/api/auth/github/start")
+def github_start():
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="GitHub sign-in isn't configured yet")
+    state = secrets.token_urlsafe(24)
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "redirect_uri": GITHUB_REDIRECT_URI,
+        "scope": "read:user user:email",
+        "state": state,
+    }
+    redirect = RedirectResponse(f"{GITHUB_AUTH_URL}?{urlencode(params)}")
+    # Same real bug as google_start above — cookie must be set on the
+    # object actually returned, not the separately-injected `response`.
+    redirect.set_cookie(
+        key=GITHUB_STATE_COOKIE, value=state, max_age=600, httponly=True,
+        secure=COOKIE_SECURE, samesite="lax", path="/",
+    )
+    return redirect
+
+
+@app.get("/api/auth/github/callback")
+async def github_callback(request: Request, response: Response, code: str = "", state: str = "", error: str = ""):
+    def fail(reason: str):
+        return RedirectResponse(f"{PUBLIC_APP_URL}/#/signin?github_error={reason}")
+
+    if error:
+        log.info("github oauth error from provider: %s", error)
+        return fail("denied")
+    cookie_state = request.cookies.get(GITHUB_STATE_COOKIE)
+    if not code or not state or not cookie_state or state != cookie_state:
+        log.warning("github oauth state mismatch or missing code")
+        return fail("state_mismatch")
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        return fail("not_configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            token_res = await client.post(
+                GITHUB_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "redirect_uri": GITHUB_REDIRECT_URI,
+                },
+                headers={"Accept": "application/json"},
+            )
+            token_res.raise_for_status()
+            access_token = token_res.json().get("access_token")
+            if not access_token:
+                return fail("token_exchange_failed")
+            auth_header = {"Authorization": f"Bearer {access_token}", "User-Agent": "SourceVenture"}
+            user_res = await client.get(GITHUB_USER_URL, headers=auth_header)
+            user_res.raise_for_status()
+            info = user_res.json()
+            email = info.get("email")
+            if not email:
+                # Private email — fall back to the verified primary from
+                # /user/emails (needs the user:email scope requested above).
+                emails_res = await client.get(GITHUB_EMAILS_URL, headers=auth_header)
+                if emails_res.status_code == 200:
+                    candidates = emails_res.json()
+                    primary = next((e for e in candidates if e.get("primary") and e.get("verified")), None)
+                    email = (primary or next((e for e in candidates if e.get("verified")), {})).get("email")
+    except httpx.HTTPError as e:
+        log.warning("github oauth token/userinfo call failed: %s", e)
+        return fail("provider_error")
+
+    github_id = str(info.get("id") or "")
+    name = (info.get("name") or info.get("login") or (email.split("@")[0] if email else "GitHub user")).strip()[:120]
+    if not github_id or not email:
+        return fail("incomplete_profile")
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id, email, name, email_verified FROM users WHERE github_id = %s", (github_id,)).fetchone()
+        if not row:
+            # Same link-by-verified-email rule as Google — GitHub already
+            # confirmed this email address, so linking rather than
+            # duplicating is safe.
+            existing = conn.execute("SELECT id, email, name, email_verified FROM users WHERE email = %s", (email,)).fetchone()
+            if existing:
+                conn.execute("UPDATE users SET github_id = %s, email_verified = 1 WHERE id = %s", (github_id, existing[0]))
+                row = (existing[0], existing[1], existing[2], 1)
+            else:
+                user_id = secrets.token_hex(12)
+                random_password_hash = hash_password(secrets.token_urlsafe(32))
+                conn.execute(
+                    "INSERT INTO users (id, email, name, password_hash, created_at, email_verified, github_id, auth_provider) "
+                    "VALUES (%s, %s, %s, %s, %s, 1, %s, 'github')",
+                    (user_id, email, name, random_password_hash, int(time.time()), github_id),
+                )
+                row = (user_id, email, name, 1)
+        token = create_session(conn, row[0])
+        conn.commit()
+    finally:
+        conn.close()
+
+    redirect = RedirectResponse(f"{PUBLIC_APP_URL}/#/dashboard")
+    set_session_cookie(redirect, token)
+    redirect.delete_cookie(GITHUB_STATE_COOKIE, path="/")
+    log.info("github login: user_id=%s", row[0])
+    return redirect
+
+
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response, _csrf=Depends(require_csrf)):
     token = request.cookies.get(COOKIE_NAME)
     if token:
         conn = get_db()
         try:
-            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.execute("DELETE FROM sessions WHERE token = %s", (token,))
             conn.commit()
         finally:
             conn.close()
     response.delete_cookie(COOKIE_NAME, path="/")
+    # Same domain= this cookie was actually SET with (see COOKIE_DOMAIN) —
+    # delete_cookie has to match domain/path exactly or the browser just
+    # ignores it and the old csrf_token cookie lingers.
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/", domain=COOKIE_DOMAIN)
     return {"ok": True}
 
 
@@ -836,9 +1187,58 @@ def me(current_user=Depends(get_current_user)):
     return current_user
 
 
+# ---------------------------------------------------------- notifications
+@app.get("/api/notifications")
+def list_notifications(current_user=Depends(get_current_user)):
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, type, title, body, project_id, created_at, read_at FROM notifications "
+            "WHERE user_id = %s ORDER BY created_at DESC LIMIT 50",
+            (current_user["id"],),
+        ).fetchall()
+        items = [
+            {"id": r[0], "type": r[1], "title": r[2], "body": r[3], "projectId": r[4], "createdAt": r[5], "readAt": r[6]}
+            for r in rows
+        ]
+        unread = sum(1 for i in items if i["readAt"] is None)
+        return {"items": items, "unread": unread}
+    finally:
+        conn.close()
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE notifications SET read_at = %s WHERE id = %s AND user_id = %s AND read_at IS NULL",
+            (int(time.time() * 1000), notification_id, current_user["id"]),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/notifications/read-all")
+def mark_all_notifications_read(current_user=Depends(get_current_user), _csrf=Depends(require_csrf)):
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE notifications SET read_at = %s WHERE user_id = %s AND read_at IS NULL",
+            (int(time.time() * 1000), current_user["id"]),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
 class ProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     avatarDataUrl: Optional[str] = None  # data:image/...;base64,... or "" to remove
+    emailNotifications: Optional[bool] = None
 
 
 MAX_AVATAR_BYTES = 600_000  # ~600KB — a small profile photo, not a full-res upload
@@ -853,7 +1253,7 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
         name = req.name.strip()[:120]
         if not name:
             raise HTTPException(status_code=400, detail="Name can't be empty")
-        updates.append("name = ?")
+        updates.append("name = %s")
         params.append(name)
 
     if req.avatarDataUrl is not None:
@@ -864,8 +1264,12 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
                 raise HTTPException(status_code=400, detail="Avatar must be an image")
             if len(req.avatarDataUrl) > MAX_AVATAR_BYTES:
                 raise HTTPException(status_code=400, detail="Image too large — please use a smaller photo (under ~450KB)")
-            updates.append("avatar_data_url = ?")
+            updates.append("avatar_data_url = %s")
             params.append(req.avatarDataUrl)
+
+    if req.emailNotifications is not None:
+        updates.append("email_notifications = %s")
+        params.append(1 if req.emailNotifications else 0)
 
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -873,11 +1277,11 @@ def update_profile(req: ProfileUpdateRequest, _csrf=Depends(require_csrf), curre
     conn = get_db()
     try:
         params.append(current_user["id"])
-        conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+        conn.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = %s", params)
         conn.commit()
         row = conn.execute(
-            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining "
-            "FROM users WHERE id = ?", (current_user["id"],)
+            "SELECT id, email, name, email_verified, avatar_data_url, plan, referral_code, referral_bonus_remaining, is_founding_member, referral_discount_pct, email_notifications "
+            "FROM users WHERE id = %s", (current_user["id"],)
         ).fetchone()
         return {"user": user_public(row)}
     finally:
@@ -927,16 +1331,39 @@ def apply_as_investor(req: InvestorApplyRequest, current_user=Depends(get_curren
     conn = get_db()
     try:
         existing = conn.execute(
-            "SELECT status FROM investor_applications WHERE user_id = ?", (current_user["id"],)
+            "SELECT status FROM investor_applications WHERE user_id = %s", (current_user["id"],)
         ).fetchone()
         if existing:
             return {"status": existing[0]}
         conn.execute(
-            "INSERT INTO investor_applications (id, user_id, name, firm, status, created_at) VALUES (?, ?, ?, ?, 'pending', ?)",
+            "INSERT INTO investor_applications (id, user_id, name, firm, status, created_at) VALUES (%s, %s, %s, %s, 'pending', %s)",
             (secrets.token_hex(10), current_user["id"], req.name, req.firm, int(time.time())),
         )
         conn.commit()
         return {"status": "pending"}
+    finally:
+        conn.close()
+
+
+class NotifyMeRequest(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/investors/notify-me")
+def notify_me_when_directory_opens(req: NotifyMeRequest, request: Request):
+    # No login required — this is the low-friction "just email me" ask,
+    # distinct from apply_as_investor above. Idempotent on the UNIQUE email
+    # column: signing up twice is a friendly no-op, not an error.
+    check_rate_limit("notify-me", client_ip(request), limit=5, window_seconds=600)
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO directory_notify_signups (id, email, created_at) VALUES (%s, %s, %s) "
+            "ON CONFLICT(email) DO NOTHING",
+            (secrets.token_hex(10), req.email.lower(), int(time.time())),
+        )
+        conn.commit()
+        return {"ok": True}
     finally:
         conn.close()
 
@@ -946,7 +1373,7 @@ def investor_application_status(current_user=Depends(get_current_user)):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT status FROM investor_applications WHERE user_id = ?", (current_user["id"],)
+            "SELECT status FROM investor_applications WHERE user_id = %s", (current_user["id"],)
         ).fetchone()
         return {"status": row[0] if row else "none"}
     finally:
@@ -958,7 +1385,7 @@ def investor_directory(current_user=Depends(get_current_user)):
     conn = get_db()
     try:
         app_row = conn.execute(
-            "SELECT status FROM investor_applications WHERE user_id = ?", (current_user["id"],)
+            "SELECT status FROM investor_applications WHERE user_id = %s", (current_user["id"],)
         ).fetchone()
         if not app_row or app_row[0] != "approved":
             raise HTTPException(status_code=403, detail="Your investor application isn't approved yet")
@@ -1015,10 +1442,18 @@ def admin_list_users(_admin=Depends(require_admin)):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, email, name, created_at, email_verified, plan FROM users ORDER BY created_at DESC"
+            "SELECT id, email, name, created_at, email_verified, plan, email_notifications FROM users ORDER BY created_at DESC"
         ).fetchall()
         return [
-            {"id": r[0], "email": r[1], "name": r[2], "createdAt": r[3], "emailVerified": bool(r[4]), "plan": r[5] or "free"}
+            {
+                "id": r[0], "email": r[1], "name": r[2], "createdAt": r[3], "emailVerified": bool(r[4]),
+                "plan": r[5] or "free",
+                # 2026-09-05 (Denis: "make sure that adds to the admin page
+                # so i see which ones i can email and which ones not") —
+                # the signup checkbox already wrote this per-user; it just
+                # never surfaced anywhere for Denis to actually read.
+                "emailNotifications": bool(r[6]) if len(r) > 6 and r[6] is not None else True,
+            }
             for r in rows
         ]
     finally:
@@ -1035,7 +1470,7 @@ def admin_list_investor_applications(status: Optional[str] = None, _admin=Depend
         )
         params: tuple = ()
         if status:
-            query += " WHERE ia.status = ?"
+            query += " WHERE ia.status = %s"
             params = (status,)
         query += " ORDER BY ia.created_at DESC"
         rows = conn.execute(query, params).fetchall()
@@ -1061,13 +1496,20 @@ def admin_decide_investor_application(
     new_status = "approved" if req.action == "approve" else "rejected"
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM investor_applications WHERE id = ?", (application_id,)).fetchone()
+        row = conn.execute("SELECT id, user_id FROM investor_applications WHERE id = %s", (application_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Application not found")
         conn.execute(
-            "UPDATE investor_applications SET status = ?, decided_at = ? WHERE id = ?",
+            "UPDATE investor_applications SET status = %s, decided_at = %s WHERE id = %s",
             (new_status, int(time.time()), application_id),
         )
+        # A real human decision the applicant is otherwise just left
+        # waiting on with zero feedback until they happen to reload the
+        # investors page themselves.
+        if new_status == "approved":
+            create_notification(conn, row[1], "investor_decision", "Investor application approved", "You now have full access to the investor directory.")
+        else:
+            create_notification(conn, row[1], "investor_decision", "Investor application update", "Your application to the investor directory wasn't approved this round.")
         conn.commit()
         return {"status": new_status}
     finally:
@@ -1089,10 +1531,10 @@ def admin_set_user_plan(user_id: str, req: PlanUpdateRequest, _admin=Depends(req
         raise HTTPException(status_code=400, detail="plan must be 'free' or 'pro'")
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="User not found")
-        conn.execute("UPDATE users SET plan = ? WHERE id = ?", (req.plan, user_id))
+        conn.execute("UPDATE users SET plan = %s WHERE id = %s", (req.plan, user_id))
         conn.commit()
         return {"plan": req.plan}
     finally:
@@ -1113,7 +1555,7 @@ def admin_delete_user(user_id: str, _admin=Depends(require_admin), _csrf=Depends
         raise HTTPException(status_code=400, detail="Can't delete your own admin account from here")
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, stripe_customer_id, stripe_subscription_id FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute("SELECT id, stripe_customer_id, stripe_subscription_id FROM users WHERE id = %s", (user_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="User not found")
         _, stripe_customer_id, stripe_subscription_id = row
@@ -1129,19 +1571,19 @@ def admin_delete_user(user_id: str, _admin=Depends(require_admin), _csrf=Depends
             except stripe.error.StripeError as e:
                 log.warning("could not cancel subscription %s for deleted user %s: %s", stripe_subscription_id, user_id, e)
 
-        project_ids = [r[0] for r in conn.execute("SELECT id FROM projects WHERE owner_user_id = ?", (user_id,)).fetchall()]
+        project_ids = [r[0] for r in conn.execute("SELECT id FROM projects WHERE owner_user_id = %s", (user_id,)).fetchall()]
         for pid in project_ids:
-            conn.execute("DELETE FROM project_ratings WHERE project_id = ?", (pid,))
-            conn.execute("DELETE FROM business_plans WHERE project_id = ?", (pid,))
-        conn.execute("DELETE FROM projects WHERE owner_user_id = ?", (user_id,))
-        conn.execute("DELETE FROM investor_applications WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))  # logs them out everywhere, immediately
+            conn.execute("DELETE FROM project_ratings WHERE project_id = %s", (pid,))
+            conn.execute("DELETE FROM business_plans WHERE project_id = %s", (pid,))
+        conn.execute("DELETE FROM projects WHERE owner_user_id = %s", (user_id,))
+        conn.execute("DELETE FROM investor_applications WHERE user_id = %s", (user_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))  # logs them out everywhere, immediately
         # Anyone this user referred keeps existing (their own account isn't
         # touched), but the now-dangling backlink is cleared so a future
         # milestone-count query doesn't join against a row that no longer
         # exists — it was only ever used to credit *this* user, who's gone.
-        conn.execute("UPDATE users SET referred_by_user_id = NULL WHERE referred_by_user_id = ?", (user_id,))
-        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.execute("UPDATE users SET referred_by_user_id = NULL WHERE referred_by_user_id = %s", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
         conn.commit()
         log.info("admin %s deleted user %s (%d projects, stripe_customer=%s)", _admin["id"], user_id, len(project_ids), stripe_customer_id)
         return {"deleted": True, "projectsRemoved": len(project_ids)}
@@ -1164,13 +1606,13 @@ def create_checkout_session(current_user=Depends(get_current_user), _csrf=Depend
     _require_stripe_configured()
     conn = get_db()
     try:
-        row = conn.execute("SELECT stripe_customer_id FROM users WHERE id = ?", (current_user["id"],)).fetchone()
+        row = conn.execute("SELECT stripe_customer_id FROM users WHERE id = %s", (current_user["id"],)).fetchone()
         customer_id = row[0] if row else None
         try:
             if not customer_id:
                 customer = stripe.Customer.create(email=current_user["email"], metadata={"user_id": current_user["id"]})
                 customer_id = customer.id
-                conn.execute("UPDATE users SET stripe_customer_id = ? WHERE id = ?", (customer_id, current_user["id"]))
+                conn.execute("UPDATE users SET stripe_customer_id = %s WHERE id = %s", (customer_id, current_user["id"]))
                 conn.commit()
             session = stripe.checkout.Session.create(
                 customer=customer_id,
@@ -1199,7 +1641,7 @@ def create_billing_portal_session(current_user=Depends(get_current_user), _csrf=
     _require_stripe_configured()
     conn = get_db()
     try:
-        row = conn.execute("SELECT stripe_customer_id FROM users WHERE id = ?", (current_user["id"],)).fetchone()
+        row = conn.execute("SELECT stripe_customer_id FROM users WHERE id = %s", (current_user["id"],)).fetchone()
         customer_id = row[0] if row else None
     finally:
         conn.close()
@@ -1218,11 +1660,20 @@ def _set_plan_by_customer_id(customer_id: str, plan: str, subscription_id: Optio
     try:
         if subscription_id is not None:
             conn.execute(
-                "UPDATE users SET plan = ?, stripe_subscription_id = ? WHERE stripe_customer_id = ?",
+                "UPDATE users SET plan = %s, stripe_subscription_id = %s WHERE stripe_customer_id = %s",
                 (plan, subscription_id, customer_id),
             )
         else:
-            conn.execute("UPDATE users SET plan = ? WHERE stripe_customer_id = ?", (plan, customer_id))
+            conn.execute("UPDATE users SET plan = %s WHERE stripe_customer_id = %s", (plan, customer_id))
+        # Fires from a webhook the user never sees any other side-effect
+        # of, so this is the one honest place to actually tell them their
+        # plan changed.
+        row = conn.execute("SELECT id FROM users WHERE stripe_customer_id = %s", (customer_id,)).fetchone()
+        if row:
+            if plan == "pro":
+                create_notification(conn, row[0], "plan_changed", "You're on SourceVenture Pro", "300 coach messages/24h and the AI business plan generator are now unlocked.")
+            elif plan == "free":
+                create_notification(conn, row[0], "plan_changed", "Your Pro subscription has ended", "You're back on the free plan (10 coach messages/24h). Resubscribe any time from Settings.")
         conn.commit()
     finally:
         conn.close()
@@ -1248,7 +1699,7 @@ async def stripe_webhook(request: Request):
     conn = get_db()
     try:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO stripe_webhook_events (event_id, event_type, received_at) VALUES (?, ?, ?)",
+            "INSERT INTO stripe_webhook_events (event_id, event_type, received_at) VALUES (%s, %s, %s) ON CONFLICT (event_id) DO NOTHING",
             (event_id, event["type"], int(time.time())),
         )
         conn.commit()
@@ -1272,7 +1723,7 @@ async def stripe_webhook(request: Request):
             conn = get_db()
             try:
                 conn.execute(
-                    "UPDATE users SET plan = 'pro', stripe_customer_id = ?, stripe_subscription_id = ? WHERE id = ?",
+                    "UPDATE users SET plan = 'pro', stripe_customer_id = %s, stripe_subscription_id = %s WHERE id = %s",
                     (customer_id, subscription_id, user_id),
                 )
                 conn.commit()
@@ -1321,7 +1772,7 @@ def list_my_projects(current_user=Depends(get_current_user)):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT data FROM projects WHERE owner_user_id = ? ORDER BY updated_at DESC",
+            "SELECT data FROM projects WHERE owner_user_id = %s ORDER BY updated_at DESC",
             (current_user["id"],),
         ).fetchall()
         return [json.loads(r[0]) for r in rows]
@@ -1342,7 +1793,7 @@ def get_project(project_id: str, request: Request):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT data, owner_user_id FROM projects WHERE id = ?", (project_id,)
+            "SELECT data, owner_user_id FROM projects WHERE id = %s", (project_id,)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -1352,7 +1803,7 @@ def get_project(project_id: str, request: Request):
         allowed_summary = False
         if token:
             sess = conn.execute(
-                "SELECT user_id, expires_at FROM sessions WHERE token = ?", (token,)
+                "SELECT user_id, expires_at FROM sessions WHERE token = %s", (token,)
             ).fetchone()
             if sess and sess[1] >= int(time.time()):
                 uid = sess[0]
@@ -1361,7 +1812,7 @@ def get_project(project_id: str, request: Request):
                     allowed_summary = True
                 else:
                     inv = conn.execute(
-                        "SELECT status FROM investor_applications WHERE user_id = ?", (uid,)
+                        "SELECT status FROM investor_applications WHERE user_id = %s", (uid,)
                     ).fetchone()
                     allowed_summary = bool(inv and inv[0] == "approved")
         if not allowed_summary:
@@ -1376,6 +1827,18 @@ def get_project(project_id: str, request: Request):
         conn.close()
 
 
+# In-app notification center (2026-09-05) — one small helper, called from
+# every real event worth telling a founder about. `conn` is the caller's
+# own connection/transaction (never opens a new one), so a notification
+# insert either commits alongside the event that caused it or rolls back
+# with it — never a stray notification for an action that itself failed.
+def create_notification(conn, user_id: str, type_: str, title: str, body: str = "", project_id: Optional[str] = None):
+    conn.execute(
+        "INSERT INTO notifications (id, user_id, type, title, body, project_id, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (secrets.token_hex(12), user_id, type_, title, body, project_id, int(time.time() * 1000)),
+    )
+
+
 def award_referral_milestones_if_earned(conn, published_user_id: str):
     # Rewards are only ever earned for founders who ACTUALLY publish — not
     # empty signups (spec section 18) — which is exactly why this is
@@ -1383,32 +1846,37 @@ def award_referral_milestones_if_earned(conn, published_user_id: str):
     # signup itself. Each milestone can only fire once per referrer: the
     # `AND referral_milestoneN_awarded = 0` guard on the UPDATE makes the
     # check-then-award atomic against a concurrent duplicate award.
-    row = conn.execute("SELECT referred_by_user_id FROM users WHERE id = ?", (published_user_id,)).fetchone()
+    row = conn.execute("SELECT referred_by_user_id FROM users WHERE id = %s", (published_user_id,)).fetchone()
     referrer_id = row[0] if row else None
     if not referrer_id:
         return
     published_referrals = conn.execute(
         "SELECT COUNT(DISTINCT u.id) FROM users u "
         "JOIN projects p ON p.owner_user_id = u.id AND p.status = 'published' "
-        "WHERE u.referred_by_user_id = ?",
+        "WHERE u.referred_by_user_id = %s",
         (referrer_id,),
     ).fetchone()[0]
     if published_referrals >= 3:
         cur = conn.execute(
             "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining + 50, "
-            "referral_milestone3_awarded = 1 WHERE id = ? AND referral_milestone3_awarded = 0",
+            "referral_discount_pct = 5, "
+            "referral_milestone3_awarded = 1 WHERE id = %s AND referral_milestone3_awarded = 0",
             (referrer_id,),
         )
         if cur.rowcount:
-            log.info("referral milestone 3 awarded to user_id=%s (+50 messages)", referrer_id)
+            log.info("referral milestone 3 awarded to user_id=%s (+50 messages, 5%% one-time discount)", referrer_id)
+            create_notification(conn, referrer_id, "referral_milestone", "3 referrals published — bonus unlocked",
+                                 "+50 coach messages and a one-time 5% Pro discount, both applied automatically.")
     if published_referrals >= 5:
         cur = conn.execute(
             "UPDATE users SET referral_bonus_remaining = referral_bonus_remaining + 100, "
-            "referral_milestone5_awarded = 1 WHERE id = ? AND referral_milestone5_awarded = 0",
+            "referral_milestone5_awarded = 1 WHERE id = %s AND referral_milestone5_awarded = 0",
             (referrer_id,),
         )
         if cur.rowcount:
             log.info("referral milestone 5 awarded to user_id=%s (+100 messages)", referrer_id)
+            create_notification(conn, referrer_id, "referral_milestone", "5 referrals published — another bonus unlocked",
+                                 "+100 more coach messages, applied automatically.")
     conn.commit()
 
 
@@ -1420,19 +1888,27 @@ def upsert_project(project_id: str, project: ProjectIn, background_tasks: Backgr
     conn = get_db()
     try:
         existing = conn.execute(
-            "SELECT owner_user_id, data FROM projects WHERE id = ?", (project_id,)
+            "SELECT owner_user_id, data FROM projects WHERE id = %s", (project_id,)
         ).fetchone()
         if existing and existing[0] and existing[0] != current_user["id"]:
             raise HTTPException(status_code=403, detail="You don't own this project")
         old_pitch = json.loads(existing[1]).get("pitch") if existing else None
         old_status = json.loads(existing[1]).get("status") if existing else None
 
+        # 2026-09-04 (Denis: "make sure u haaave to verify email") — a draft
+        # can still be saved unverified, but the moment it would go public
+        # (first transition to "published") a confirmed email is required.
+        # Never gated at signup/login itself, so an unverified user can
+        # still explore the app and finish their draft before verifying.
+        if project.status == "published" and old_status != "published" and not current_user.get("emailVerified"):
+            raise HTTPException(status_code=403, detail="Please verify your email before publishing — check your inbox or resend the link from Settings.")
+
         payload = project.model_dump()
         payload["updatedAt"] = now
         payload["ownerUserId"] = current_user["id"]
         conn.execute(
             """INSERT INTO projects (id, owner_user_id, status, published_at, updated_at, data)
-               VALUES (?, ?, ?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s, %s, %s)
                ON CONFLICT(id) DO UPDATE SET
                  status=excluded.status,
                  published_at=excluded.published_at,
@@ -1476,20 +1952,102 @@ async def _try_gemini(system: str, messages: list, max_tokens: int) -> Optional[
     # OpenAI-compatible endpoint — no separate SDK needed, one fetch shape
     # covers this free provider.
     oa_messages = [{"role": "system", "content": system}] + messages
+    # 2026-09-05 (Denis: "something wrong with the ai... make it so that
+    # never happens") — a PREVIOUS version of this function slept out
+    # Google's own suggested retryDelay (up to 45s, up to twice) on a 429.
+    # That was actively wrong on this deployment target: this endpoint runs
+    # as a Vercel serverless function with a function-execution time limit
+    # far shorter than "up to ~90s of sleeping" — a rating alone fires 3 of
+    # these in parallel, so any real 429 burst reliably blew straight
+    # through the platform's own timeout and came back as a bare 504 with
+    # no JSON body at all, which the frontend can't distinguish from any
+    # other failure — hence "something went wrong reaching the AI" on
+    # every single message. Fixed by failing FAST on 429 instead: return
+    # None immediately so call_llm() below can fall through to the next
+    # configured provider (or the honest, fast, already-well-handled 503)
+    # well inside the platform's time budget. Waiting doesn't meaningfully
+    # help anyway — Google's free-tier cap here is per-minute, and this
+    # request cycle is nowhere near a full minute long.
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             res = await client.post(
                 "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                 headers={"Authorization": f"Bearer {GEMINI_API_KEY}", "Content-Type": "application/json"},
                 json={"model": GEMINI_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages, "reasoning_effort": "none"},
             )
-        if res.status_code != 200:
-            log.warning("Gemini HTTP %s: %s", res.status_code, res.text[:300])
-            return None
-        content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
-        return content or None
+        if res.status_code == 200:
+            content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+            return content or None
+        log.warning("Gemini HTTP %s: %s", res.status_code, res.text[:300])
+        return None
     except Exception as e:  # noqa: BLE001 — any transport failure just falls through to the next provider
         log.warning("Gemini call failed: %s", e)
+        return None
+
+
+# Free-tier OpenAI-compatible fallback #1 — same request/response shape as
+# Gemini above, different host/key. Quiet no-op (returns None immediately)
+# until GROQ_API_KEY is actually set, same "present but unset = skipped"
+# pattern as every other optional integration in this file.
+async def _try_groq(system: str, messages: list, max_tokens: int) -> Optional[str]:
+    if not GROQ_API_KEY:
+        return None
+    oa_messages = [{"role": "system", "content": system}] + messages
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                json={"model": GROQ_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages},
+            )
+        if res.status_code == 200:
+            content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+            return content or None
+        log.warning("Groq HTTP %s: %s", res.status_code, res.text[:300])
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("Groq call failed: %s", e)
+        return None
+
+
+# Free-tier OpenAI-compatible fallback #2 — OpenRouter fronts many free
+# models behind one API; picks whichever OPENROUTER_MODEL is configured
+# (default is a real, currently-free OpenRouter model slug). Same quiet
+# no-op until OPENROUTER_API_KEY is set.
+async def _try_openrouter(system: str, messages: list, max_tokens: int) -> Optional[str]:
+    if not OPENROUTER_API_KEY:
+        return None
+    oa_messages = [{"role": "system", "content": system}] + messages
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json",
+                    "HTTP-Referer": PUBLIC_APP_URL or "https://sourceventure.dev", "X-Title": "SourceVenture",
+                },
+                # 2026-09-05: confirmed live — several free OpenRouter models
+                # (including the default) are reasoning models by default,
+                # which burn a chunk of max_tokens on an internal
+                # "reasoning" field before ever writing the actual answer.
+                # Under a tight max_tokens cap (structured JSON responses
+                # here are capped at 500-1200), that silently truncated the
+                # real content. reasoning:{enabled:false} fixed it in
+                # testing — confirmed the same request drop from ~90
+                # reasoning tokens + truncated content to a clean, fast,
+                # complete JSON reply.
+                json={
+                    "model": OPENROUTER_MODEL, "max_tokens": min(max_tokens, 4096), "messages": oa_messages,
+                    "reasoning": {"enabled": False},
+                },
+            )
+        if res.status_code == 200:
+            content = res.json().get("choices", [{}])[0].get("message", {}).get("content")
+            return content or None
+        log.warning("OpenRouter HTTP %s: %s", res.status_code, res.text[:300])
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("OpenRouter call failed: %s", e)
         return None
 
 
@@ -1497,7 +2055,7 @@ async def _try_anthropic(system: str, messages: list, max_tokens: int) -> Option
     if not ANTHROPIC_API_KEY:
         return None
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
@@ -1514,16 +2072,32 @@ async def _try_anthropic(system: str, messages: list, max_tokens: int) -> Option
 
 
 # Gemini (free tier) is the PRIMARY provider for both the coach and the help
-# widget — Anthropic only gets reached as a paid last-resort fallback if
-# GEMINI_API_KEY is ever unset or a call fails. Same "present but unset =
-# skipped" honesty pattern as everywhere else in this codebase.
+# widget. On failure this now falls through a real chain of free/paid
+# fallbacks — Groq, then OpenRouter, then Anthropic — trying each only if
+# its key is actually configured (quiet skip otherwise), so "one provider
+# has a bad minute" doesn't have to mean "the AI is down." Every one of
+# these fails fast (no sleeping) so the whole chain still fits comfortably
+# inside a single serverless request even if several links fail in a row.
 async def call_llm(system: str, messages: list, max_tokens: int = 1200) -> str:
     text = await _try_gemini(system, messages, max_tokens)
+    if text:
+        return text
+    text = await _try_groq(system, messages, max_tokens)
+    if text:
+        return text
+    text = await _try_openrouter(system, messages, max_tokens)
     if text:
         return text
     text = await _try_anthropic(system, messages, max_tokens)
     if text:
         return text
+    if GEMINI_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY or ANTHROPIC_API_KEY:
+        # At least one provider IS configured — this was a real, live
+        # failure (quota/outage), not a missing setup. Distinct detail
+        # string so the frontend can show an honest "temporarily busy, try
+        # again shortly" message instead of the misleading "not set up"
+        # one it shows for the truly-unconfigured case below.
+        raise HTTPException(status_code=503, detail="AI_BUSY")
     raise HTTPException(status_code=503, detail="No AI provider configured or reachable (set GEMINI_API_KEY or ANTHROPIC_API_KEY)")
 
 
@@ -1584,7 +2158,9 @@ COUNCIL = [
                       "Ignore claims with no evidence behind them in the data given."),
     ("growth", "You are a growth/traction analyst. You care about evidence of REAL demand — users, revenue, "
                "engagement, retention — versus a founder merely asserting demand exists. Absence of evidence "
-               "is not proof of demand; say so."),
+               "is not proof of demand; say so. If the repo context below includes a GitHub star count, treat "
+               "it as one real (if partial) traction signal — call out whether it's meaningfully above zero "
+               "for the project's apparent age/category, but don't over-weight a small number either way."),
 ]
 
 RATING_JSON_SHAPE = (
@@ -1669,8 +2245,22 @@ async def _chairman_synthesize(req: RateRequest, votes: List[dict]) -> Optional[
         return None
 
 
+async def _staggered_council_member(key: str, prompt: str, req: RateRequest, delay: float) -> Optional[dict]:
+    if delay:
+        await asyncio.sleep(delay)
+    return await _council_member(key, prompt, req)
+
+
 async def run_council_rating(req: RateRequest) -> dict:
-    results = await asyncio.gather(*[_council_member(key, prompt, req) for key, prompt in COUNCIL])
+    # 2026-09-05 (confirmed live: a real 429 burst from all 3 judges firing
+    # in the exact same instant, on the shared free-tier Gemini key's
+    # 5-req/minute cap) — a small stagger between judges (0.35s apart)
+    # costs nothing perceptible against multi-second LLM latency but
+    # meaningfully reduces the odds of a synchronized burst tripping the
+    # rate limit that a small stagger doesn't eliminate but does reduce.
+    results = await asyncio.gather(*[
+        _staggered_council_member(key, prompt, req, i * 0.35) for i, (key, prompt) in enumerate(COUNCIL)
+    ])
     votes = [r for r in results if r]
     if not votes:
         raise HTTPException(status_code=502, detail="Every council member failed — try again")
@@ -1709,7 +2299,7 @@ async def rate_project(project_id: str, req: RateRequest, current_user=Depends(g
     # trigger a rating for it, same rule as PUT /api/projects/{id}.
     conn = get_db()
     try:
-        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = %s", (project_id,)).fetchone()
     finally:
         conn.close()
     if not row:
@@ -1727,7 +2317,7 @@ def get_rating(project_id: str):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT overall, scores, verdict, biggest_risk, improvements, judges, updated_at FROM project_ratings WHERE project_id = ?",
+            "SELECT overall, scores, verdict, biggest_risk, improvements, judges, updated_at FROM project_ratings WHERE project_id = %s",
             (project_id,),
         ).fetchone()
         if not row:
@@ -1745,7 +2335,7 @@ def save_rating(project_id: str, result: dict):
     try:
         conn.execute(
             """INSERT INTO project_ratings (project_id, overall, scores, verdict, biggest_risk, improvements, judges, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(project_id) DO UPDATE SET
                  overall=excluded.overall, scores=excluded.scores, verdict=excluded.verdict,
                  biggest_risk=excluded.biggest_risk, improvements=excluded.improvements,
@@ -1834,7 +2424,7 @@ def save_business_plan(project_id: str, content: dict):
     conn = get_db()
     try:
         conn.execute(
-            """INSERT INTO business_plans (project_id, content, updated_at) VALUES (?, ?, ?)
+            """INSERT INTO business_plans (project_id, content, updated_at) VALUES (%s, %s, %s)
                ON CONFLICT(project_id) DO UPDATE SET content=excluded.content, updated_at=excluded.updated_at""",
             (project_id, json.dumps(content), int(time.time())),
         )
@@ -1844,7 +2434,7 @@ def save_business_plan(project_id: str, content: dict):
 
 
 def _owned_project_or_404(conn, project_id: str, current_user: dict) -> dict:
-    row = conn.execute("SELECT data, owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    row = conn.execute("SELECT data, owner_user_id FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
     if row[1] and row[1] != current_user["id"]:
@@ -1866,7 +2456,7 @@ async def create_business_plan(project_id: str, req: RateRequest, current_user=D
     try:
         _owned_project_or_404(conn, project_id, current_user)
         rating_row = conn.execute(
-            "SELECT overall, scores, verdict, biggest_risk, improvements FROM project_ratings WHERE project_id = ?",
+            "SELECT overall, scores, verdict, biggest_risk, improvements FROM project_ratings WHERE project_id = %s",
             (project_id,),
         ).fetchone()
     finally:
@@ -1888,7 +2478,7 @@ def read_business_plan(project_id: str, current_user=Depends(get_current_user)):
     try:
         _owned_project_or_404(conn, project_id, current_user)
         row = conn.execute(
-            "SELECT content, updated_at FROM business_plans WHERE project_id = ?", (project_id,)
+            "SELECT content, updated_at FROM business_plans WHERE project_id = %s", (project_id,)
         ).fetchone()
         if not row:
             return {"plan": None}
@@ -1987,7 +2577,7 @@ def record_analytics_event(event: AnalyticsEventIn, request: Request):
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO analytics_events (name, project_id, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO analytics_events (name, project_id, created_at) VALUES (%s, %s, %s)",
             (event.name, event.projectId, int(time.time())),
         )
         conn.commit()
@@ -2006,7 +2596,7 @@ def analytics_summary(days: int = 30, current_user=Depends(get_current_user)):
         totals = {
             row[0]: row[1]
             for row in conn.execute(
-                "SELECT name, COUNT(*) FROM analytics_events WHERE created_at >= ? GROUP BY name",
+                "SELECT name, COUNT(*) FROM analytics_events WHERE created_at >= %s GROUP BY name",
                 (since,),
             ).fetchall()
         }
@@ -2016,7 +2606,7 @@ def analytics_summary(days: int = 30, current_user=Depends(get_current_user)):
             """SELECT a.project_id, a.name, COUNT(*)
                FROM analytics_events a
                JOIN projects p ON p.id = a.project_id
-               WHERE a.created_at >= ? AND p.owner_user_id = ?
+               WHERE a.created_at >= %s AND p.owner_user_id = %s
                GROUP BY a.project_id, a.name""",
             (since, current_user["id"]),
         ).fetchall()
@@ -2037,7 +2627,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
     since = int(time.time()) - days * 86400
     conn = get_db()
     try:
-        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        row = conn.execute("SELECT owner_user_id FROM projects WHERE id = %s", (project_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Project not found")
         if row[0] != current_user["id"]:
@@ -2046,7 +2636,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
         totals = {
             name: count
             for name, count in conn.execute(
-                "SELECT name, COUNT(*) FROM analytics_events WHERE project_id = ? AND created_at >= ? GROUP BY name",
+                "SELECT name, COUNT(*) FROM analytics_events WHERE project_id = %s AND created_at >= %s GROUP BY name",
                 (project_id, since),
             ).fetchall()
         }
@@ -2054,7 +2644,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
         # without doing its own date math.
         daily_rows = conn.execute(
             """SELECT date(created_at, 'unixepoch') AS day, name, COUNT(*)
-               FROM analytics_events WHERE project_id = ? AND created_at >= ?
+               FROM analytics_events WHERE project_id = %s AND created_at >= %s
                GROUP BY day, name ORDER BY day ASC""",
             (project_id, since),
         ).fetchall()
@@ -2063,7 +2653,7 @@ def workspace_analytics(project_id: str, days: int = 30, current_user=Depends(ge
             daily.setdefault(day, {})[name] = count
 
         rating_row = conn.execute(
-            "SELECT overall, scores, updated_at FROM project_ratings WHERE project_id = ?",
+            "SELECT overall, scores, updated_at FROM project_ratings WHERE project_id = %s",
             (project_id,),
         ).fetchone()
         rating = None

@@ -10,11 +10,69 @@
      to an attacker-controlled host. connect-src covers the backend
      (localhost in dev; add your deployed API origin here) and GitHub's
      public API; everything else is denied by default-src 'self'. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' http://localhost:8000 https://api.github.com https://sourceventure.onrender.com; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-src https://challenges.cloudflare.com; connect-src 'self' http://localhost:8000 https://api.github.com https://api.sourceventure.dev https://challenges.cloudflare.com; base-uri 'self'; form-action 'self'" />
 <!-- frame-ancestors is deliberately absent: it's ignored in a <meta> CSP and
      only works as a real HTTP header. Set it (or X-Frame-Options) on whatever
      serves this file in production — the API already sends X-Frame-Options. -->
+<!-- 2026-09-04: zero-build static file, so there's no env-var injection at
+     build time — the API base is set here based on hostname instead of
+     being hardcoded, so the exact same file works unchanged for both local
+     dev (falls through to the http://localhost:8000 default in the app
+     script below) and the real deployment. -->
+<script>
+  if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    window.SOURCEVENTURE_API_BASE = "https://api.sourceventure.dev";
+  }
+</script>
 <title>SourceVenture — Venture Engineering</title>
+<meta name="description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it — before optionally sharing an approved summary with investors." />
+<link rel="canonical" href="https://sourceventure.dev/" />
+<!-- 2026-09-05 (Denis: "add the logo and stuff to the tab thing") — the
+     browser-tab icon, plus a proper iOS home-screen icon. favicon.png is
+     the dark-ink mark on transparent (reads on the light tab-bar chrome
+     most browsers default to); apple-touch-icon.png has a solid dark fill
+     since iOS renders transparency in touch icons as flat black. Both
+     generated from the same two logo files everywhere else already uses. -->
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<!-- Open Graph / Twitter Card — used by link-preview crawlers and by some
+     AI assistants that fetch a page's social metadata to summarize it.
+     og-card.png (2026-09-05) is a real 1200x630 social card — swapped in
+     for the bare transparent logo.png, which is a tall 588x784 portrait
+     and rendered oddly/cropped on most link-preview surfaces (they expect
+     a landscape image close to 1.91:1). -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="SourceVenture" />
+<meta property="og:title" content="SourceVenture — Venture Engineering" />
+<meta property="og:description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it." />
+<meta property="og:url" content="https://sourceventure.dev/" />
+<meta property="og:image" content="https://sourceventure.dev/assets/og-card.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="SourceVenture — Venture Engineering" />
+<meta name="twitter:description" content="Publish your startup, get an AI-generated Source Score and honest analysis, and work privately with an AI counselor to improve it." />
+<meta name="twitter:image" content="https://sourceventure.dev/assets/og-card.png" />
+<!-- JSON-LD structured data — helps both classic rich-result search and
+     AI answer engines correctly identify what this product is, rather
+     than guessing from unstructured page text. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "SourceVenture",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web",
+  "description": "SourceVenture lets startup founders publish their project, receive an AI-generated Source Score (0-100) and analysis, and work privately with an AI counselor to improve their startup before optionally sharing an approved summary with investors.",
+  "offers": [
+    { "@type": "Offer", "name": "Free", "price": "0", "priceCurrency": "USD" },
+    { "@type": "Offer", "name": "SourceVenture Pro", "price": "15", "priceCurrency": "USD" }
+  ]
+}
+</script>
+<!-- Cloudflare Turnstile — tiny, safe to always load; the widget itself
+     only renders on the signup form when TURNSTILE_SITE_KEY is set. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
@@ -114,6 +172,18 @@ p{margin:0;}
 .blob-1{animation-name:blobFloatCenter;}
 @keyframes blobFloatCenter{0%,100%{transform:translate(-50%,0) rotate(0deg);}50%{transform:translate(-50%,-24px) rotate(1deg);}}
 #root,.overlay,.toast,#help-fab,#help-panel{position:relative;z-index:1;}
+/* 2026-09-05 real bug, caught live via Playwright: #root sits at z-index:1
+   deliberately (regular page content should never cover a modal/cookie-
+   banner/help-widget) — but that same stacking context caps EVERY
+   descendant, including the new mobile nav drawer (#sidenav, z-index:250
+   in its own rule). No descendant z-index, however high, can ever beat a
+   sibling of #root that has a genuinely higher one (.cookie-banner:200,
+   #help-fab/panel:150) — the click on the hamburger, then on a drawer
+   link, both landed on the cookie banner instead. Scoped fix: only
+   while the drawer is actually open (body.sidenav-open, set in
+   toggleSidenav()) does #root's own stacking context rise above those
+   overlays — still below .toast(300), which should always win regardless. */
+body.sidenav-open #root{z-index:210;}
 @media (prefers-reduced-motion:reduce){.blob{animation:none;}}
 .hidden{display:none !important;}
 .material-symbols-outlined{font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24;font-size:20px;line-height:1;}
@@ -138,7 +208,31 @@ p{margin:0;}
 #topbar .tb-left{display:flex;align-items:center;gap:14px;}
 #topbar .tb-title{font-family:var(--font-display);font-size:18px;font-weight:700;}
 #topbar .tb-divider{width:1px;height:16px;background:var(--outline-variant);}
-#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.08em;}
+#topbar .tb-badge{font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;}
+/* Was wrapping "Founder Workspace" onto 2 lines and crowding the new
+   hamburger button — divider+badge are decorative, safe to drop first;
+   the wordmark follows at the point the hamburger is also present. */
+@media(max-width:640px){#topbar .tb-divider,#topbar .tb-badge{display:none;}}
+@media(max-width:480px){#topbar .sv-wordmark{display:none;}}
+/* 2026-09-05 (Denis: "dont like the header layout in mobile in the
+   dashboard") — 4 separate icon buttons (hamburger, theme, sync,
+   account) spread across a bar with hidden wordmark/badge left a big
+   dead gap in the middle and felt cluttered on the right. "Sync" is
+   low-value chrome (a static "everything's already live" toast, no real
+   action) and "Account" duplicates the drawer's own account row/Settings
+   link one tap away — both drop on mobile, leaving just the theme toggle. */
+/* 2026-09-05: same specificity bug class as the hamburger fix above —
+   #topbar .tb-icon{display:flex} (unconditional, appears later in source)
+   was tying with and beating this media-scoped rule at equal specificity,
+   so sync/account were never actually hidden on mobile despite the intent
+   below. Adding .tb-icon to this selector (1 id + 2 classes) makes it
+   unambiguously more specific instead of relying on source-order luck. */
+@media(max-width:640px){#topbar .tb-icon.tb-sync,#topbar .tb-icon.tb-account{display:none;}}
+.tb-page-label{display:none;}
+@media(max-width:640px){
+  .tb-page-label{display:inline-block;font-family:var(--font-display);font-weight:700;font-size:15px;color:var(--on-surface-variant);margin-left:2px;padding-left:10px;border-left:1px solid var(--outline-variant);}
+}
+@media(max-width:400px){.tb-page-label{display:none;}} /* smallest phones: back to just hamburger+mark, no room to spare */
 #topbar .tb-right{display:flex;align-items:center;gap:6px;}
 #topbar .tb-icon{width:32px;height:32px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--on-surface-variant);}
 #topbar .tb-icon:hover{color:var(--primary);background:var(--surface-high);transform:scale(1.08);}
@@ -155,16 +249,55 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .app-layout{display:flex;min-height:calc(100vh - var(--topbar-h));}
 #sidenav{width:var(--nav-w);flex:none;border-right:1px solid var(--outline-variant);background:rgba(5,5,6,.4);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;flex-direction:column;position:sticky;top:var(--topbar-h);height:calc(100vh - var(--topbar-h));}
 :root[data-theme="light"] #sidenav{background:rgba(244,245,251,.5);}
-@media(max-width:900px){#sidenav{display:none;}}
+/* 2026-09-05 (Denis: "the three lines in dashboard in header arent
+   necessary in desktop") — this was a real, always-on specificity bug,
+   not just a too-generous breakpoint: #topbar .tb-icon above (specificity
+   1 id + 1 class) sets display:flex on EVERY .tb-icon including this one,
+   which unconditionally beat a bare `.tb-hamburger{display:none}` (only 1
+   class) regardless of viewport width or source order — the hamburger was
+   effectively visible on every screen size, this media query's own
+   display:flex was never the thing actually showing it. Matching the
+   #topbar prefix on both rules below fixes the specificity, not just the
+   breakpoint. */
+#topbar .tb-hamburger{display:none;}
+#sidenav-overlay{display:none;}
+/* Real mobile nav: #sidenav becomes a fixed slide-in drawer (was just
+   `display:none` with nothing built to replace it — no way to reach
+   Projects/Investors/Settings/Admin on a phone at all). Toggled by
+   .tb-hamburger, dismissed by tapping #sidenav-overlay or any nav link. */
+@media(max-width:820px){
+  #topbar .tb-hamburger{display:flex;}
+  #sidenav{
+    display:flex;position:fixed;top:0;left:0;height:100vh;width:280px;max-width:82vw;
+    z-index:250;transform:translateX(-100%);transition:transform .28s var(--ease-out-expo);
+    box-shadow:0 0 50px rgba(0,0,0,.5);border-right:none;
+  }
+  #sidenav.open{transform:translateX(0);}
+  #sidenav-overlay{
+    display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:249;
+    opacity:0;pointer-events:none;transition:opacity .28s ease;
+  }
+  #sidenav-overlay.show{opacity:1;pointer-events:auto;}
+}
 .sn-head{padding:20px;border-bottom:1px solid var(--outline-variant);display:flex;gap:12px;align-items:center;}
 /* Sidebar header is now the account row (avatar + name), not a logo tile —
    the brand mark below lives in the top bar and landing nav instead. */
 .sn-head-account{text-decoration:none;color:inherit;transition:background-color .2s var(--ease-out-expo);}
 .sn-head-account:hover{background:var(--surface-high);}
 .sn-head h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+.sn-pro-pill{display:inline-block;font-family:var(--font-mono);font-size:9px;font-weight:700;letter-spacing:.04em;color:#8a6a1a;background:#e8b84b;border-radius:5px;padding:1.5px 5px;margin-left:6px;vertical-align:2px;}
+:root[data-theme="light"] .sn-pro-pill{color:#6b5013;}
 .sn-head p{font-family:var(--font-mono);font-size:10.5px;color:var(--on-surface-variant);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
 .avatar-circle{border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-bright));box-shadow:0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;color:#fff;flex:none;object-fit:cover;}
-.sv-brand{display:inline-flex;align-items:center;gap:8px;}
+.avatar-circle.pro{box-shadow:0 0 0 2px #e8b84b,0 0 0 1px rgba(255,255,255,.08),0 4px 16px rgba(92,148,120,.35);}
+/* 2026-09-05 (Denis: "logo and title in header are a bit discentred
+   vertically, put them down") — .sv-brand/#topbar both already used
+   align-items:center, which centers the mark and wordmark relative to
+   EACH OTHER correctly, but the mark's source PNG has a sliver of
+   transparent padding above the glyph, so the visual weight of the whole
+   lockup reads a few px above true-center in the 60px bar. A small
+   relative nudge down fixes what flexbox math alone can't. */
+.sv-brand{display:inline-flex;align-items:center;gap:8px;position:relative;top:2px;}
 .sv-mark{flex:none;display:block;width:auto;}
 .sv-mark-light{display:none;}
 :root[data-theme="light"] .sv-mark-dark{display:none;}
@@ -175,12 +308,18 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .sn-links a{display:flex;align-items:center;gap:12px;padding:11px 20px;color:var(--on-surface-variant);font-size:14px;border-left:2px solid transparent;transition:color .15s,background .15s;}
 .sn-links a:hover{color:var(--on-surface);background:var(--surface-high);}
 .sn-links a.active{color:var(--primary);background:var(--surface-low);border-left-color:var(--primary);}
+.sn-notif-badge{margin-left:auto;background:var(--primary);color:var(--on-primary,#0a0a0a);font-size:10.5px;font-weight:700;line-height:1;border-radius:999px;padding:3px 6px;min-width:16px;text-align:center;}
 .sn-foot{border-top:1px solid var(--outline-variant);padding:10px;}
 .sn-foot a{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);color:var(--on-surface-variant);font-size:13px;}
 .sn-foot a:hover{color:var(--on-surface);background:var(--surface-high);}
 
 #main{flex:1;min-width:0;padding:48px;}
-@media(max-width:760px){#main{padding:24px 18px;}}
+/* 2026-09-05: bottom padding reserved so the last card on a page never
+   sits directly under #help-fab (fixed, bottom:22px right:22px, 52px —
+   confirmed live on every logged-in page: dashboard's project card,
+   coach's Source Score button, and Settings' Save button were all
+   getting covered by it). */
+@media(max-width:760px){#main{padding:24px 18px 140px 18px;}}
 .canvas{max-width:900px;margin:0 auto;position:relative;}
 /* 2026-08-26, Denis: "behind every text and input... a bit of black/white
    gradient depending on mode so the pixels dont interfere." A soft radial
@@ -247,7 +386,33 @@ body,#topbar,#landing-nav,#sidenav,.card,.modal,#help-panel,.field input,.field 
 .ln-links a{font-size:13.5px;color:var(--on-surface-variant);}
 .ln-links a:hover{color:var(--on-surface);}
 @media(max-width:860px){.ln-links{display:none;}}
+.ln-actions{display:flex;gap:10px;align-items:center;}
+/* 2026-09-05 (Denis, mobile bug report): "Get Started"/"Sign In" didn't
+   fit in the header on narrow phones — #landing-nav's own left+right
+   padding (40px) plus the brand mark+wordmark plus both buttons added up
+   to more width than a ~360-390px phone viewport has. Reclaim space by
+   dropping the wordmark (the logo mark alone still reads as the brand —
+   same "logo bigger, not the text" mark from the 2026-09-04 round) and
+   tightening the button cluster's own gap/padding, mobile only — desktop
+   is untouched. */
+@media(max-width:480px){
+  #landing-nav .wrap{padding:0 14px;}
+  #landing-nav .sv-wordmark{display:none;}
+  .ln-actions{gap:6px;}
+  .ln-actions .btn-sm{padding:7px 10px;font-size:11.5px;}
+  /* "make the scroll more stable and steady" — a sticky element recomputing
+     a 20px backdrop-filter blur on every scroll-compositing frame is a
+     well-known mobile jank source (heavier than the same blur on a
+     non-sticky element). Same frosted-glass look at a fraction of the
+     cost with a smaller radius; desktop keeps the full blur(20px). */
+  #topbar,#landing-nav{backdrop-filter:blur(8px) saturate(1.4);-webkit-backdrop-filter:blur(8px) saturate(1.4);}
+}
 .hero{padding:110px 0 120px;}
+/* Denis: "hero bottom margin for mobile a tad shorter" — matches the
+   existing .hero h1 mobile breakpoint below rather than introducing a new
+   one. Top padding (clears the sticky nav) is left alone; only the bottom
+   gap before the next section is trimmed. */
+@media(max-width:520px){.hero{padding-bottom:64px;}}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
 @media(max-width:940px){.hero-grid{grid-template-columns:1fr;}}
 .hero h1{font-size:68px;line-height:1.03;letter-spacing:-.03em;margin:18px 0 20px;}
@@ -316,6 +481,14 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .scarcity h2{font-size:24px;margin-bottom:10px;}
 .scarcity p{color:var(--on-surface-variant);max-width:460px;margin-bottom:22px;font-size:14.5px;}
 .prog-wrap{width:100%;max-width:340px;margin-bottom:18px;}
+/* 2026-09-05: confirmed live — on the investors page (a short card, so
+   the fixed #help-fab's corner always lands somewhere in its viewport-
+   relative zone regardless of scroll), the progress track ran edge-to-
+   edge in the card and the FAB visually sliced through its right end.
+   Trimming the track short of the FAB's ~54px corner column on mobile
+   fixes this specific confirmed case without touching every page that
+   happens to have content near that corner. */
+@media(max-width:760px){.prog-wrap{max-width:calc(100% - 54px);}}
 .prog-top{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--on-surface-variant);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;}
 .prog-top .now{color:var(--primary);}
 .prog-track{height:8px;border-radius:20px;background:var(--surface-high);border:1px solid var(--outline-variant);overflow:hidden;}
@@ -344,9 +517,36 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .file-row .ftime{color:var(--outline);}
 
 .coach-layout{display:grid;grid-template-columns:1fr 260px;gap:0;background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);overflow:hidden;height:calc(100vh - var(--topbar-h) - 96px);min-height:520px;}
-@media(max-width:1000px){.coach-layout{grid-template-columns:1fr;height:auto;}}
-.coach-main{display:flex;flex-direction:column;min-width:0;}
-.coach-scroll{flex:1;overflow-y:auto;padding:24px 26px;display:flex;flex-direction:column;gap:18px;}
+/* Bug: "can't scroll down in the chat page to the chatbox." Two real
+   causes, both fixed:
+   (1) .coach-scroll was missing min-height:0 (see that rule) — a flex
+       child defaults to min-height:auto, which lets it grow to fit
+       content forever instead of scrolling.
+   (2) On mobile this grid stacks into 2 rows (chat, then the score/
+       metrics side panel) with implicit `auto` row sizing — with
+       height:auto on the whole grid there was nothing bounding either
+       row at all. Giving .coach-layout a bounded height fixes the outer
+       box, but grid then split that height ~40/60 in the SIDE PANEL's
+       favor (its content happened to be taller), leaving the actual chat
+       only ~160px tall. grid-template-rows below gives the chat row the
+       remaining space (1fr) and caps the side panel at 220px — capped,
+       not auto, so ITS OWN overflow-y:auto (already set on .coach-side)
+       is what handles any overflow there, instead of the row just
+       growing to fit all of it and starving the chat again. */
+@media(max-width:1000px){.coach-layout{grid-template-columns:1fr;grid-template-rows:1fr minmax(0,220px);height:calc(100vh - var(--topbar-h) - 24px);}}
+/* min-height:0 here too — .coach-main is itself a grid item, and grid
+   items default to min-height:auto same as flex items do, so without
+   this it would grow past its assigned grid-row track (446px on mobile)
+   to fit .coach-scroll's content, defeating that fix the same way. */
+.coach-main{display:flex;flex-direction:column;min-width:0;min-height:0;}
+/* min-height:0 is load-bearing here, not decoration — a flex child
+   defaults to min-height:auto, which lets it grow to fit its content
+   instead of respecting flex:1 and actually scrolling. Without this, the
+   pane just gets taller with every message forever (the real bug behind
+   "can't scroll down to the chatbox"), pushing .coach-input-row off the
+   bottom of the layout instead of staying pinned while messages scroll
+   underneath it. */
+.coach-scroll{flex:1;min-height:0;overflow-y:auto;padding:24px 26px;display:flex;flex-direction:column;gap:18px;}
 .cmsg{display:flex;flex-direction:column;gap:4px;max-width:640px;}
 .cmsg.user{align-self:flex-end;align-items:flex-end;}
 .cmsg .cmeta{font-family:var(--font-mono);font-size:10px;color:var(--on-surface-variant);text-transform:uppercase;letter-spacing:.05em;}
@@ -365,6 +565,11 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 .coach-input-inner textarea{flex:1;background:var(--surface-low);border:1px solid var(--outline-variant);border-radius:var(--radius);padding:11px 14px;color:var(--on-surface);font-size:13.5px;resize:none;min-height:44px;max-height:120px;}
 .coach-side{border-left:1px solid var(--outline-variant);padding:20px 18px;overflow-y:auto;}
 @media(max-width:1000px){.coach-side{border-left:none;border-top:1px solid var(--outline-variant);}}
+/* 2026-09-05: confirmed live — #help-fab (fixed, bottom-right) sat right
+   on top of "Improve my pitch"/"Get my Source Score" here. .coach-side is
+   its own scroll region (not #main's normal flow), so #main's own bottom-
+   padding fix never reached it — needs its own reserved clearance. */
+@media(max-width:760px){.coach-side{padding-bottom:28px;}}
 .coach-side h4{font-family:var(--font-mono);font-size:10.5px;text-transform:uppercase;color:var(--on-surface-variant);letter-spacing:.05em;margin-bottom:10px;}
 .coach-side-block{margin-bottom:22px;}
 .metric-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:12.5px;border-bottom:1px solid var(--outline-variant);}
@@ -423,15 +628,44 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 :root[data-theme="light"] .auth-field input:focus{background:rgba(19,21,43,.05);}
 .auth-submit-row{position:relative;margin-top:18px;}
 .auth-submit-row .auth-field{margin-bottom:0;}
-.auth-submit-row .auth-field input{padding-right:54px;}
+/* 2026-09-05 (Denis: "view password eye is overlapping arrow") — the
+   arrow submit button and the show/hide-password toggle now both live
+   inside the same input, so the input needs room for both (was padded
+   for the arrow alone). pw-toggle sits just to the left of the arrow,
+   not underneath it. */
+.auth-submit-row .auth-field input{padding-right:88px;}
 .auth-go{position:absolute;right:5px;top:5px;width:38px;height:38px;border-radius:50%;border:none;background:rgba(255,255,255,.10);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;transition:background-color .2s var(--ease-out-expo);}
 .auth-go:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
 .auth-go:hover{background:var(--accent-green);color:#04150e;}
 .auth-go[disabled]{opacity:.5;cursor:not-allowed;}
 :root[data-theme="light"] .auth-go{background:rgba(19,21,43,.08);color:#13152b;}
+.auth-go.dodging{transition:transform .12s ease-out,background-color .2s var(--ease-out-expo);background:rgba(255,138,138,.16);}
+.auth-go.dodging:hover{background:rgba(255,138,138,.28);color:#fff;}
+/* Custom show/hide-password toggle — also suppresses the browser's own
+   native reveal icon (Edge's ::-ms-reveal collided with our arrow button
+   in exactly the spot Denis reported) so there's only ever one eye icon,
+   in a position we control, across every browser. */
+input[type="password"]::-ms-reveal,input[type="password"]::-ms-clear{display:none;}
+input[type="password"]::-webkit-credentials-auto-fill-button{display:none !important;visibility:hidden;pointer-events:none;position:absolute;right:0;}
+.auth-pw-field{position:relative;}
+.auth-pw-field input{padding-right:44px;}
+.pw-toggle{position:absolute;top:5px;width:32px;height:32px;border:none;background:transparent;color:rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:50%;transition:color .2s ease,background-color .2s ease;}
+.pw-toggle .material-symbols-outlined{font-size:19px;}
+.pw-toggle:hover{color:#fff;background:rgba(255,255,255,.08);}
+.pw-toggle:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-green-dim);}
+:root[data-theme="light"] .pw-toggle{color:rgba(19,21,43,.5);}
+:root[data-theme="light"] .pw-toggle:hover{color:#13152b;background:rgba(19,21,43,.06);}
+.auth-pw-field .pw-toggle{right:8px;}
+.auth-submit-row .pw-toggle{right:46px;}
+.pw-hint-bad{color:#ff8a8a;}
+.auth-checkbox-row{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:rgba(255,255,255,.6);margin-top:14px;cursor:pointer;line-height:1.4;}
+.auth-checkbox-row input{margin-top:2px;flex:none;}
+:root[data-theme="light"] .auth-checkbox-row{color:rgba(19,21,43,.6);}
 .auth-error{color:#ff8a8a;font-size:12.5px;margin:14px 0 0;min-height:1px;}
-.auth-google-btn{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:18px;}
+.auth-google-btn{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;}
 .auth-google-btn svg{flex:none;}
+.auth-github-btn{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:18px;}
+.auth-github-btn svg{flex:none;}
 .auth-divider{display:flex;align-items:center;gap:12px;margin-bottom:18px;color:rgba(255,255,255,.35);font-size:12px;}
 :root[data-theme="light"] .auth-divider{color:rgba(19,21,43,.35);}
 .auth-divider::before,.auth-divider::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.12);}
@@ -458,27 +692,83 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
 @media (prefers-reduced-motion:reduce){.auth-step{animation:none;}.auth-icon-ring{animation:none;}.auth-icon-ring.spin .material-symbols-outlined{animation:none;}}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-high);border:1px solid var(--outline-variant);border-radius:var(--radius);padding:12px 20px;font-size:13px;opacity:0;pointer-events:none;transition:all .25s ease;z-index:300;max-width:90vw;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+/* 2026-09-05 (Denis: "no overlapping uis in mobile" — confirmed live: a
+   bottom:22px toast landed directly on top of the coach page's "Improve
+   my pitch" button right after publishing, exactly when a user would
+   want to tap it). Bottom-anchored real content (coach action buttons,
+   the help FAB) is common enough on mobile that a bottom toast will
+   always be at risk of covering SOMETHING there — moving it up near the
+   topbar instead sidesteps the whole class of collision rather than
+   chasing one page at a time. */
+@media(max-width:640px){
+  .toast{bottom:auto;top:calc(var(--topbar-h) + 10px);transform:translateX(-50%) translateY(-14px);}
+  .toast.show{transform:translateX(-50%) translateY(0);}
+}
 .toast.err{border-color:rgba(255,107,107,0.35);color:var(--error);}
 .skel{background:linear-gradient(90deg,var(--surface-low) 25%,var(--surface-high) 37%,var(--surface-low) 63%);background-size:400% 100%;animation:skel 1.4s ease infinite;border-radius:8px;}
 @keyframes skel{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
-.reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);}
+/* will-change hints the compositor to promote these onto their own GPU
+   layer before the scroll-triggered transition starts, so the fade/rise/
+   blur doesn't compete with the browser's own scroll compositing the
+   moment it fires — a handful of landing-page elements, not costly to
+   leave hinted permanently. */
+.reveal{opacity:0;filter:blur(6px);transform:translateY(36px) scale(.98);transition:opacity .7s var(--ease-out-expo),filter .7s var(--ease-out-expo),transform .7s var(--ease-out-expo);will-change:opacity,transform,filter;}
 .reveal.in{opacity:1;filter:blur(0);transform:translateY(0) scale(1);}
 .magnetic{transition:transform .25s var(--ease-out-expo);}
 @media(prefers-reduced-motion:reduce){.reveal{opacity:1;filter:none;transform:none;transition:none;}}
 
 /* ---------- help widget ---------- */
 #help-fab{position:fixed;bottom:22px;right:22px;width:52px;height:52px;border-radius:50%;background:var(--primary);color:var(--on-primary);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 1px rgba(92,148,120,.5),0 6px 24px rgba(92,148,120,.4);z-index:150;transition:transform .2s var(--ease-out-expo),background-color .2s var(--ease-out-expo);}
+/* 2026-09-05: confirmed live (real viewport screenshots, not just full-
+   page) — bottom:22px landed the FAB directly on top of "Save name" on
+   Settings, "Improve my pitch"/"Get my Source Score" on Coach, and the
+   last project card on Dashboard. Padding-bottom on the scroll
+   containers (below) only helps once a page is long enough to scroll
+   past the fold; a short page's last button can still land in this
+   corner on first load. Smaller + higher on mobile clears every
+   confirmed case with real margin to spare. */
+@media(max-width:760px){#help-fab{width:40px;height:40px;bottom:88px;right:14px;}}
+@media(max-width:760px){body.is-coach-route #help-fab,body.is-coach-route #help-panel{display:none;}}
 #help-fab:active{transform:scale(.96);}
 #help-fab:hover{background:var(--primary-bright);}
-#help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
+/* 2026-09-05 real bug (Denis: "help button doesnt work"): background was
+   var(--surface), a near-fully-transparent glass tone (alpha .035/.05 —
+   confirmed via computed style) meant to sit on a blurred backdrop, but
+   this panel never had a backdrop-filter of its own — on desktop the
+   panel is small enough this read as a faint tint; blown up to a near-
+   full-screen mobile sheet it looked like the panel wasn't there at all,
+   just floating unstyled text over the page. Same solid frosted-panel
+   treatment #topbar/.auth-card already use (--surface-lowest + a real
+   blur) instead. */
+#help-panel{position:fixed;bottom:86px;right:22px;width:340px;max-width:calc(100vw - 32px);height:440px;max-height:calc(100vh - 120px);background:var(--surface-lowest);backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);box-shadow:0 12px 40px rgba(0,0,0,.45);display:none;flex-direction:column;overflow:hidden;z-index:150;}
 #help-panel.open{display:flex;}
+#help-backdrop{display:none;}
+/* Mobile: a real near-full-screen sheet with a dimmed backdrop behind it,
+   not a small box anchored to the fab's corner floating directly over
+   page content (see toggleHelpWidget()'s comment for the full reasoning). */
+@media(max-width:640px){
+  #help-panel{top:8vh;left:10px;right:10px;bottom:10px;width:auto;max-width:none;height:auto;max-height:none;border-radius:20px 20px var(--radius-lg) var(--radius-lg);z-index:251;}
+  #help-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:250;opacity:0;pointer-events:none;transition:opacity .25s ease;}
+  #help-backdrop.show{opacity:1;pointer-events:auto;}
+  /* No #root stacking-context fix needed here (unlike the nav drawer) —
+     #help-fab/#help-panel are already direct <body> children, siblings
+     of #root rather than descendants, so their own z-index already
+     competes at the top level without being capped. */
+}
 .cookie-banner{position:fixed;left:22px;right:22px;bottom:22px;max-width:520px;background:var(--surface-lowest);backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);border:1px solid var(--outline-variant);border-radius:var(--radius-lg);padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:200;display:none;flex-direction:column;gap:12px;}
 .cookie-banner.show{display:flex;}
 .cookie-banner p{font-size:12.5px;line-height:1.6;color:var(--on-surface-variant);}
 .cookie-banner .link{color:var(--primary);text-decoration:underline;}
 .cookie-actions{display:flex;gap:8px;justify-content:flex-end;}
 .btn-sm{padding:7px 14px;font-size:12.5px;border-radius:var(--radius);border:1px solid var(--outline-variant);}
-@media (max-width:520px){.cookie-banner{left:12px;right:12px;bottom:12px;}}
+/* 2026-09-05: was bottom:12px on mobile, same corner as every primary CTA
+   on this app's pages (confirmed live — it sat directly over "Evaluate my
+   idea" on the coach page and other bottom buttons elsewhere). Moved
+   below the topbar on mobile instead (own real bug caught live: placing
+   it at top:12px put it OVER the topbar itself, intercepting clicks on
+   the new hamburger button) — still visible immediately, blocks nothing
+   above or below it. */
+@media (max-width:520px){.cookie-banner{left:12px;right:12px;bottom:auto;top:calc(var(--topbar-h) + 10px);}}
 .help-head{padding:14px 16px;border-bottom:1px solid var(--outline-variant);display:flex;justify-content:space-between;align-items:center;}
 .help-head h4{font-size:13.5px;}
 .help-scroll{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}
@@ -519,6 +809,7 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
   </div>
 </div>
 
+<div id="help-backdrop" onclick="toggleHelpWidget();"></div>
 <button id="help-fab" title="Help" onclick="toggleHelpWidget()"><span class="material-symbols-outlined">chat_bubble</span></button>
 <div id="help-panel">
   <div class="help-head"><h4>SourceVenture Help</h4><button class="modal-close" style="position:static;" onclick="toggleHelpWidget()" aria-label="Close">&times;</button></div>
@@ -534,6 +825,12 @@ footer{padding:36px 0;border-top:1px solid var(--outline-variant);}
    SOURCEVENTURE — core constants, state, utils, storage, APIs
    ============================================================ */
 const API_BASE = window.SOURCEVENTURE_API_BASE || "http://localhost:8000";
+// Cloudflare Turnstile site key — public, safe to ship client-side (unlike
+// the secret key, which only ever lives in the backend's env). Empty until
+// Denis creates a Turnstile site; the widget below simply doesn't render
+// when this is blank, same "quiet until configured" pattern as Google/
+// GitHub sign-in.
+const TURNSTILE_SITE_KEY = window.SOURCEVENTURE_TURNSTILE_SITE_KEY || "";
 // First Drop (2026-09-02): free cap is 10/rolling-24h (was 25); Pro is a
 // 300/24h soft ceiling — see backend main.py's consume_coach_allowance for
 // the real, server-enforced version of this same number. currentDailyCap()
@@ -561,10 +858,16 @@ function avatarInitials(name){
 function avatarHtml(user, size){
   size = size || 40;
   var style = "width:" + size + "px;height:" + size + "px;font-size:" + Math.round(size * 0.4) + "px;";
+  // 2026-09-05 (Denis: "ui for pro has some differentiation, subtle, like
+  // upgraded") — a thin gold ring around the avatar for plan==='pro',
+  // everywhere avatarHtml renders (sidenav header on every app page,
+  // Settings → Account) rather than a new one-off element. Deliberately
+  // just the ring, no color-scheme change or extra badge — "subtle".
+  var proClass = (user && user.plan === "pro") ? " pro" : "";
   if(user && user.avatarUrl){
-    return '<img class="avatar-circle" style="' + style + '" src="' + escapeHtml(user.avatarUrl) + '" alt="" />';
+    return '<img class="avatar-circle' + proClass + '" style="' + style + '" src="' + escapeHtml(user.avatarUrl) + '" alt="" />';
   }
-  return '<div class="avatar-circle" style="' + style + '">' + escapeHtml(avatarInitials(user && user.name)) + '</div>';
+  return '<div class="avatar-circle' + proClass + '" style="' + style + '">' + escapeHtml(avatarInitials(user && user.name)) + '</div>';
 }
 function escapeHtml(s){
   return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
@@ -683,7 +986,11 @@ function logoMarkHtml(size){
          '<img class="sv-mark sv-mark-light" src="assets/logo-light.png" height="' + s + '" alt="" />';
 }
 function brandHtml(href){
-  var inner = '<span class="sv-brand">' + logoMarkHtml(19) + '<span class="sv-wordmark">SourceVenture</span></span>';
+  // 2026-09-04 (Denis: "put logo bigger, not the text just the logo") —
+  // was 19px, matched to the wordmark's line-height; bumped to 30px. Only
+  // the mark's own size argument changes here — sv-wordmark's font-size is
+  // untouched, and .sv-brand's flex align-items:center keeps them lined up.
+  var inner = '<span class="sv-brand">' + logoMarkHtml(30) + '<span class="sv-wordmark">SourceVenture</span></span>';
   return href ? '<a href="' + href + '" class="tb-title">' + inner + '</a>' : '<div class="tb-title">' + inner + '</div>';
 }
 
@@ -755,12 +1062,34 @@ var DOT_PRESET = { cell: 32, dot: 1.9, maxAlpha: 0.11, revealSpeed: 0.03, color:
 function startDotCanvas(canvas, opts){
   opts = Object.assign({}, DOT_PRESET, opts || {});
   var cell = opts.cell, dot = opts.dot, maxAlpha = opts.maxAlpha, color = opts.color, revealSpeed = opts.revealSpeed;
+  // 2026-09-05 (Denis: "make the scroll more stable and steady" on mobile)
+  // — this canvas is #bg-fx, position:fixed behind every page, redrawing
+  // every animation frame forever regardless of scroll state. On a phone
+  // GPU that's real competing work against the browser's own scroll
+  // compositing every frame you're actively dragging the page. Cut the
+  // per-frame cost specifically on narrow viewports: fewer, larger cells
+  // (drawn area is the same, just far fewer roundRect calls) and a lower
+  // device-pixel-ratio cap (fewer physical pixels to rasterize). Desktop
+  // is untouched — this only kicks in under the same ~480px phone
+  // breakpoint used for the header/hero mobile fixes.
+  var isMobileViewport = window.innerWidth <= 480;
+  if(isMobileViewport) cell = cell * 1.6;
   var ctx = canvas.getContext("2d");
-  var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  var dpr = Math.min(window.devicePixelRatio || 1, isMobileViewport ? 1 : 1.5);
   var start = performance.now();
   var raf, w, h;
   var mouseX = -9999, mouseY = -9999; // canvas-local CSS px; off-screen until first move
   var hoverRadius = 130, hoverBoost = 2.2;
+  // Mobile (Denis: "instead of with mouse, for mobile, make it on tap so a
+  // kinda wave forms of pixels") — there's no continuous pointer position
+  // to follow on a touchscreen, so a tap instead drops a ripple: an
+  // expanding ring that boosts whatever dots it currently passes through,
+  // fading out as it travels outward. Bound on window, not the canvas
+  // itself, same reasoning as the mousemove listener below — #bg-fx (the
+  // sitewide layer this also runs on) is pointer-events:none, so listening
+  // on the canvas element directly would never fire.
+  var ripples = []; // {x, y, start}
+  var RIPPLE_LIFE = 1.1, RIPPLE_SPEED = 420, RIPPLE_WIDTH = 50, RIPPLE_MAX = 4;
   function resize(){
     w = canvas.clientWidth; h = canvas.clientHeight;
     canvas.width = w * dpr; canvas.height = h * dpr;
@@ -771,13 +1100,28 @@ function startDotCanvas(canvas, opts){
     mouseX = e.clientX - r.left; mouseY = e.clientY - r.top;
   }
   function onLeave(){ mouseX = -9999; mouseY = -9999; }
+  function onTouchStart(e){
+    var r = canvas.getBoundingClientRect();
+    var now = performance.now();
+    for(var i = 0; i < e.changedTouches.length; i++){
+      var touch = e.changedTouches[i];
+      ripples.push({ x: touch.clientX - r.left, y: touch.clientY - r.top, start: now });
+    }
+    if(ripples.length > RIPPLE_MAX) ripples.splice(0, ripples.length - RIPPLE_MAX);
+  }
+  function onTouchEnd(){ mouseX = -9999; mouseY = -9999; } // avoid a lingering static glow from touch's synthetic mousemove
   resize();
   window.addEventListener("resize", resize);
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseleave", onLeave);
+  window.addEventListener("touchstart", onTouchStart, { passive: true });
+  window.addEventListener("touchend", onTouchEnd, { passive: true });
+  window.addEventListener("touchcancel", onTouchEnd, { passive: true });
   function draw(now){
     var t = (now - start) / 1000;
     ctx.clearRect(0, 0, w, h);
+    // Prune expired ripples once per frame (not once per dot below).
+    while(ripples.length && (now - ripples[0].start) / 1000 > RIPPLE_LIFE) ripples.shift();
     // Light mode needs noticeably more alpha than dark to read at the same
     // perceived strength — pale-on-white is inherently harder to see than
     // pale-on-black. Checked live (not cached) so it responds instantly to
@@ -808,6 +1152,19 @@ function startDotCanvas(canvas, opts){
           alpha = Math.min(1, alpha + proximity * hoverBoost * themeAlpha);
           r = dot + proximity * 2.2;
         }
+        for(var ri = 0; ri < ripples.length; ri++){
+          var rp = ripples[ri];
+          var rippleAge = (now - rp.start) / 1000;
+          var waveRadius = rippleAge * RIPPLE_SPEED;
+          var ringDist = Math.abs(Math.hypot(px - rp.x, py - rp.y) - waveRadius);
+          if(ringDist < RIPPLE_WIDTH){
+            var ringProximity = 1 - ringDist / RIPPLE_WIDTH;
+            var fade = 1 - rippleAge / RIPPLE_LIFE;
+            var boost = ringProximity * fade;
+            alpha = Math.min(1, alpha + boost * hoverBoost * themeAlpha);
+            r = Math.max(r, dot + boost * 2.6);
+          }
+        }
         ctx.fillStyle = "rgba(" + color + "," + alpha.toFixed(3) + ")";
         // Slightly rounded squares, not circles — reads as "pixels", not dots.
         var s = r * 1.7;
@@ -828,6 +1185,9 @@ function startDotCanvas(canvas, opts){
     window.removeEventListener("resize", resize);
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseleave", onLeave);
+    window.removeEventListener("touchstart", onTouchStart);
+    window.removeEventListener("touchend", onTouchEnd);
+    window.removeEventListener("touchcancel", onTouchEnd);
   };
 }
 // Sitewide layer: started once at boot (see bottom of file), never stopped —
@@ -860,9 +1220,27 @@ function googleAuthErrorFromHash(){
   return code ? (GOOGLE_ERROR_MESSAGES[code] || "Google sign-in failed — use email instead.") : null;
 }
 function startGoogleAuth(){ window.location.href = API_BASE + "/api/auth/google/start"; }
+
+var GITHUB_ERROR_MESSAGES = {
+  not_configured: "GitHub sign-in isn't set up yet — use email instead.",
+  denied: "GitHub sign-in was cancelled.",
+  state_mismatch: "That GitHub sign-in link expired — try again.",
+  provider_error: "GitHub couldn't be reached — try again in a moment.",
+  incomplete_profile: "Your GitHub account didn't share a verified email — use email instead.",
+  token_exchange_failed: "GitHub sign-in failed — try again.",
+};
+function githubAuthErrorFromHash(){
+  var i = window.location.hash.indexOf("?");
+  if(i === -1) return null;
+  var params = new URLSearchParams(window.location.hash.slice(i + 1));
+  var code = params.get("github_error");
+  return code ? (GITHUB_ERROR_MESSAGES[code] || "GitHub sign-in failed — use email instead.") : null;
+}
+function startGithubAuth(){ window.location.href = API_BASE + "/api/auth/github/start"; }
 function renderAuthPage(root, mode){
   var isSignup = mode === "signup";
   var googleErr = googleAuthErrorFromHash();
+  var githubErr = githubAuthErrorFromHash();
   root.innerHTML =
     '<div class="auth-shell"><canvas class="auth-canvas" id="auth-canvas"></canvas><div class="auth-vignette"></div>' +
     authTopHtml() +
@@ -870,17 +1248,36 @@ function renderAuthPage(root, mode){
       '<h1>' + (isSignup ? "Start building" : "Welcome back") + '</h1>' +
       '<p class="auth-sub">' + (isSignup ? "Free — publish projects and talk to your coach." : "Sign in to keep going.") + '</p>' +
       (googleErr ? '<p class="auth-error" style="display:block;">' + escapeHtml(googleErr) + '</p>' : "") +
+      (githubErr ? '<p class="auth-error" style="display:block;">' + escapeHtml(githubErr) + '</p>' : "") +
       '<button type="button" class="btn btn-ghost btn-block auth-google-btn" onclick="startGoogleAuth()">' +
         '<svg width="16" height="16" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.61z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.19l-2.92-2.26c-.81.54-1.85.87-3.04.87-2.34 0-4.32-1.58-5.03-3.7H.9v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.9A9 9 0 0 0 0 9c0 1.45.35 2.83.9 4.05l3.07-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.95l3.07 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>' +
         (isSignup ? "Sign up with Google" : "Sign in with Google") +
+      '</button>' +
+      '<button type="button" class="btn btn-ghost btn-block auth-github-btn" onclick="startGithubAuth()">' +
+        '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>' +
+        (isSignup ? "Sign up with GitHub" : "Sign in with GitHub") +
       '</button>' +
       '<div class="auth-divider"><span>or</span></div>' +
       '<form onsubmit="event.preventDefault();submitAuthForm(\'' + mode + '\');">' +
         (isSignup ? '<div class="auth-field"><input type="text" id="auth-name" placeholder="Your name" autocomplete="name" /></div>' : "") +
         '<div class="auth-field"><input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" /></div>' +
-        '<div class="auth-field auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="' + (isSignup ? "new-password" : "current-password") + '" />' +
-          '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="' + (isSignup ? "Create account" : "Sign in") + '"><span class="material-symbols-outlined">arrow_forward</span></button>' +
-        '</div>' +
+        (isSignup ?
+          '<div class="auth-field auth-pw-field"><input type="password" id="auth-password" placeholder="Password" autocomplete="new-password" oninput="onAuthPasswordInput()" />' +
+            '<button type="button" class="pw-toggle" tabindex="-1" aria-label="Show password" onclick="togglePwVisibility(\'auth-password\',this)"><span class="material-symbols-outlined">visibility</span></button>' +
+          '</div>' +
+          '<p class="muted" style="font-size:11px;margin:-4px 0 12px;" id="pw-hint">At least 10 characters, with upper &amp; lowercase, a number and a symbol.</p>' +
+          '<div class="auth-field auth-submit-row" id="auth-submit-row"><input type="password" id="auth-password-confirm" placeholder="Confirm password" autocomplete="new-password" />' +
+            '<button type="button" class="pw-toggle" tabindex="-1" aria-label="Show password" onclick="togglePwVisibility(\'auth-password-confirm\',this)"><span class="material-symbols-outlined">visibility</span></button>' +
+            '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="Create account"><span class="material-symbols-outlined">arrow_forward</span></button>' +
+          '</div>'
+        :
+          '<div class="auth-field auth-submit-row" id="auth-submit-row"><input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" />' +
+            '<button type="button" class="pw-toggle" tabindex="-1" aria-label="Show password" onclick="togglePwVisibility(\'auth-password\',this)"><span class="material-symbols-outlined">visibility</span></button>' +
+            '<button type="submit" class="auth-go magnetic" id="auth-submit" aria-label="Sign in"><span class="material-symbols-outlined">arrow_forward</span></button>' +
+          '</div>'
+        ) +
+        (isSignup ? '<label class="auth-checkbox-row"><input type="checkbox" id="auth-email-notifs" checked /> Email me updates about my account (you can change this later in Settings)</label>' : "") +
+        (isSignup && TURNSTILE_SITE_KEY ? '<div id="turnstile-widget" style="margin-top:12px;"></div>' : "") +
       '</form>' +
       '<p class="auth-error" id="auth-error"></p>' +
       '<p class="auth-switch">' + (isSignup ? "Already have an account? " : "New here? ") +
@@ -889,6 +1286,90 @@ function renderAuthPage(root, mode){
   if(__authCanvasStop) __authCanvasStop();
   __authCanvasStop = startDotCanvas($("auth-canvas"));
   setTimeout(function(){ var f = $("auth-name") || $("auth-email"); if(f) f.focus(); }, 350);
+  window.__turnstileToken = null;
+  if(isSignup && TURNSTILE_SITE_KEY) renderTurnstileWidget();
+  if(isSignup) initDodgingSubmitButton();
+}
+
+// "Anti-magnetic" submit button (Denis: "when u dont put strong enough
+// pass, the button runs away from you... oposite of magnetic button") —
+// only active on signup, only while the password is below the real
+// strength bar (see passwordIsStrong, mirrors the backend's
+// validate_password_strength exactly). Once strong, or once the mouse
+// isn't near it, the button eases back to its resting spot. This is a
+// playful nudge only — the real gate is still the check in
+// submitAuthForm/the backend; a dodge never blocks a click that lands.
+function passwordIsStrong(pw){
+  return !!pw && pw.length >= 10 && /[A-Z]/.test(pw) && /[a-z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
+}
+var DODGE = { active:false, row:null, btn:null, onMove:null };
+function initDodgingSubmitButton(){
+  teardownDodgingSubmitButton();
+  var row = $("auth-submit-row"), btn = $("auth-submit");
+  if(!row || !btn) return;
+  DODGE.row = row; DODGE.btn = btn;
+  DODGE.onMove = function(ev){
+    if(!DODGE.active){ btn.style.transform = ""; return; }
+    var r = btn.getBoundingClientRect();
+    var bx = r.left + r.width/2, by = r.top + r.height/2;
+    var dx = bx - ev.clientX, dy = by - ev.clientY;
+    var dist = Math.hypot(dx, dy);
+    var radius = 90; // how close the cursor needs to get before it dodges
+    if(dist < radius){
+      var strength = (radius - dist) / radius; // 0..1, stronger pull up close
+      var angle = Math.atan2(dy, dx);
+      var kick = 46 * strength;
+      var rowRect = row.getBoundingClientRect();
+      var maxX = Math.max(0, rowRect.width - r.width - 4);
+      var moveX = Math.cos(angle) * kick;
+      var moveY = Math.sin(angle) * kick;
+      // Clamp so it can't fly out of its own field row.
+      moveX = Math.max(-maxX * 0.6, Math.min(maxX * 0.6, moveX));
+      moveY = Math.max(-16, Math.min(16, moveY));
+      btn.style.transform = "translate(" + moveX.toFixed(1) + "px," + moveY.toFixed(1) + "px)";
+    } else {
+      btn.style.transform = "";
+    }
+  };
+  document.addEventListener("mousemove", DODGE.onMove);
+  onAuthPasswordInput();
+}
+function teardownDodgingSubmitButton(){
+  if(DODGE.onMove) document.removeEventListener("mousemove", DODGE.onMove);
+  DODGE.active = false; DODGE.row = null; DODGE.btn = null; DODGE.onMove = null;
+}
+function togglePwVisibility(fieldId, btn){
+  var el = $(fieldId);
+  if(!el) return;
+  var showing = el.type === "text";
+  el.type = showing ? "password" : "text";
+  btn.querySelector(".material-symbols-outlined").textContent = showing ? "visibility" : "visibility_off";
+  btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+}
+function onAuthPasswordInput(){
+  var pwEl = $("auth-password"), btn = $("auth-submit"), hint = $("pw-hint");
+  if(!pwEl || !btn) return;
+  var strong = passwordIsStrong(pwEl.value);
+  DODGE.active = pwEl.value.length > 0 && !strong;
+  btn.classList.toggle("dodging", DODGE.active);
+  if(!DODGE.active) btn.style.transform = "";
+  if(hint) hint.classList.toggle("pw-hint-bad", pwEl.value.length > 0 && !strong);
+}
+// Explicit render (not implicit/auto) — this app injects the form via
+// innerHTML, which Turnstile's own auto-scan only catches on the initial
+// page load, not on later SPA navigations. Retries briefly since api.js
+// loads async and may not be ready the first time this runs.
+function renderTurnstileWidget(attempt){
+  var el = $("turnstile-widget");
+  if(!el) return;
+  if(!window.turnstile){ if((attempt||0) < 20) setTimeout(function(){ renderTurnstileWidget((attempt||0)+1); }, 150); return; }
+  el.innerHTML = "";
+  window.turnstile.render(el, {
+    sitekey: TURNSTILE_SITE_KEY,
+    theme: currentTheme() === "light" ? "light" : "dark",
+    callback: function(token){ window.__turnstileToken = token; },
+    "expired-callback": function(){ window.__turnstileToken = null; },
+  });
 }
 
 function renderAuthCheckEmail(email){
@@ -919,6 +1400,30 @@ async function resendVerificationEmail(btn){
   }
 }
 
+// 2026-09-05 (Denis: "verification flow perfect, like make it so the page
+// automatically refresh when verified even if on different device") —
+// polls the real server-side emailVerified flag (not a local flag, so a
+// click on a phone while this tab is open on a laptop still picks it up)
+// every 4s while the gate above is showing, and re-runs the router the
+// moment it flips true. Cleared by stopVerifyGatePoll() the instant the
+// gate itself isn't the current render, so it never runs in the
+// background once the user is past it.
+var VERIFY_GATE_POLL = null;
+function startVerifyGatePoll(){
+  if(VERIFY_GATE_POLL) return;
+  VERIFY_GATE_POLL = setInterval(async function(){
+    await checkAuth();
+    if(STATE.auth && STATE.auth.user && STATE.auth.user.emailVerified){
+      stopVerifyGatePoll();
+      showToast("Email verified!");
+      router();
+    }
+  }, 4000);
+}
+function stopVerifyGatePoll(){
+  if(VERIFY_GATE_POLL){ clearInterval(VERIFY_GATE_POLL); VERIFY_GATE_POLL = null; }
+}
+
 async function submitAuthForm(mode){
   var isSignup = mode === "signup";
   var name = isSignup ? $("auth-name").value.trim() : null;
@@ -926,7 +1431,9 @@ async function submitAuthForm(mode){
   var err = $("auth-error");
   err.textContent = "";
   if((isSignup && !name) || !email || !password){ err.textContent = "Fill in every field."; return; }
-  if(isSignup && password.length < 8){ err.textContent = "Password must be at least 8 characters."; return; }
+  if(isSignup && !passwordIsStrong(password)){ err.textContent = "Password needs 10+ characters with upper & lowercase, a number and a symbol."; return; }
+  if(isSignup && password !== $("auth-password-confirm").value){ err.textContent = "Passwords don't match."; return; }
+  if(isSignup && TURNSTILE_SITE_KEY && !window.__turnstileToken){ err.textContent = "Please complete the verification check."; return; }
   var btn = $("auth-submit"); btn.disabled = true;
   try{
     var url = API_BASE + (isSignup ? "/api/auth/signup" : "/api/auth/login");
@@ -935,12 +1442,13 @@ async function submitAuthForm(mode){
       var qIdx = window.location.hash.indexOf("?");
       if(qIdx !== -1) refCode = new URLSearchParams(window.location.hash.slice(qIdx+1)).get("ref");
     }
-    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined } : { email:email, password:password };
+    var body = isSignup ? { name:name, email:email, password:password, ref: refCode || undefined, turnstileToken: window.__turnstileToken || undefined, emailNotifications: !!($("auth-email-notifs") && $("auth-email-notifs").checked) } : { email:email, password:password };
     var res = await fetch(url, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
     var data = await res.json();
     if(!res.ok) throw new Error(data.detail || (isSignup ? "Could not create account" : "Invalid email or password"));
     setAuth(data.user);
     if(isSignup){
+      teardownDodgingSubmitButton();
       track("signup_completed");
       renderAuthCheckEmail(data.user.email);
     } else {
@@ -1001,12 +1509,30 @@ function termsHtml(){
     '<h2>Your account</h2><p>You\'re responsible for what you publish and for keeping your password to yourself. Don\'t share an account across people; each real user should have their own.</p>' +
     '<h2>Your content</h2><p>You keep ownership of what you write here. By publishing a project you\'re allowing it to be shown publicly on the platform (and, for the AI coach, sent to our AI provider to generate responses). Draft projects are not public and are never shown to anyone but you.</p>' +
     '<h2>The AI coach isn\'t advice</h2><p>Coach output is generated by an AI model reading your pitch and public repo content. It can be wrong. Treat it as a drafting aid, not investment, legal, or financial advice.</p>' +
-    '<h2>Free tier</h2><p>The free tier includes 25 coach messages per rolling 24 hours, enforced server-side. We may change limits or pricing as the product develops; we\'ll try to be upfront about it rather than silently changing behavior.</p>' +
+    '<h2>Free tier</h2><p>The free tier includes ' + FREE_DAILY_CAP + ' coach messages per rolling 24 hours, enforced server-side (Pro raises that to ' + PRO_DAILY_CAP + '/24h). We may change limits or pricing as the product develops; we\'ll try to be upfront about it rather than silently changing behavior.</p>' +
     '<h2>Fair use</h2><p>Don\'t use this to publish anything illegal, to impersonate someone else, or to abuse the coach/investor-application flow (e.g. scripted spam applications). We can suspend accounts that do.</p>' +
     '<h2>No warranty</h2><p>Provided as-is, without warranty of any kind, while this is actively being built. We\'ll do our best to keep it reliable and to communicate honestly when something is broken rather than pretend it isn\'t.</p>' +
     '<h2>Contact</h2><p>' + escapeHtml(sourceventureContactNote()) + '</p>';
 }
 function sourceventureContactNote(){ return "No dedicated support email is set up yet — for now, reach out through whoever gave you access to SourceVenture."; }
+function docsHtml(){
+  return '<h1>Documentation</h1><p class="legal-updated">How SourceVenture actually works, end to end.</p>' +
+    '<h2>1. Publish a project</h2><p>From the dashboard, click <strong>New Project</strong> and fill in a name, one-line tagline, and a real pitch — the more specific, the better the coach and rating council can work with it. Connecting a public GitHub repo is optional but strongly recommended: we read its description, README, language, and star count (never anything private) and factor that into your rating and coach conversations. Publishing requires a verified email address.</p>' +
+    '<h2>2. The AI coach</h2><p>Every published project gets its own private coach thread, grounded in your actual pitch and repo — not a generic chatbot. Free accounts get ' + FREE_DAILY_CAP + ' coach messages per rolling 24 hours; Pro raises that to ' + PRO_DAILY_CAP + '. Coach conversations are private by default and are never shown to investors.</p>' +
+    '<h2>3. The rating council</h2><p>Clicking "Rate my project" runs three independently-prompted AI judges in parallel — a skeptical VC, a technical due-diligence reviewer, and a growth/traction analyst — then a chairman model synthesizes their scores into one overall number plus per-dimension breakdowns. Scores are deliberately calibrated to be hard to inflate: an early, unremarkable idea should land 35-65, not 90.</p>' +
+    '<h2>4. Business plan (Pro)</h2><p>Pro accounts can generate a full section-by-section AI business plan grounded in the same pitch, repo, and rating data — not a disconnected generic template.</p>' +
+    '<h2>5. Investor directory</h2><p>Gated until the cohort reaches a real threshold on both total users and published projects (see the live countdown on the investors page). Once open, access still requires a manually-approved application — it\'s never automatic. You choose if/when to generate and approve an investor-facing summary of your project; nothing is shown to investors until you explicitly approve it.</p>' +
+    '<h2>6. Notifications</h2><p>Referral milestones, plan changes, and investor-application decisions all show up in the in-app Notifications center (sidebar), not just as a one-time toast you might miss.</p>' +
+    '<h2>Questions this page doesn\'t answer?</h2><p>See <a href="#" onclick="event.preventDefault();nav(\'#/support\');">Support</a>.</p>';
+}
+function supportHtml(){
+  return '<h1>Support</h1><p class="legal-updated">' + escapeHtml(sourceventureContactNote()) + '</p>' +
+    '<h2>Common issues</h2>' +
+    '<h3 style="font-size:15px;margin:18px 0 4px;">"Publishing failed"</h3><p>The most common cause is an unverified email — publishing (not drafting) requires a confirmed address. Check Settings for a "Resend verification email" option, and check spam. The error message now shows the exact reason rather than a generic failure.</p>' +
+    '<h3 style="font-size:15px;margin:18px 0 4px;">"Something went wrong reaching the AI"</h3><p>This means every configured AI provider failed or hit a rate limit at the same moment — rare, and it fails fast (a few seconds), not after a long hang. Try again shortly; if it persists, the account running this instance needs to check its AI provider keys.</p>' +
+    '<h3 style="font-size:15px;margin:18px 0 4px;">Investor directory is locked</h3><p>By design — it opens once the cohort hits a real threshold, shown live on the <a href="#" onclick="event.preventDefault();nav(\'#/investors\');">investors page</a>. Use "Notify me" there to get an email the moment it opens.</p>' +
+    '<h2>Still stuck?</h2><p>See <a href="#" onclick="event.preventDefault();nav(\'#/docs\');">Documentation</a> for how the product works end to end, or reach out through whoever gave you access.</p>';
+}
 async function doLogout(){
   try{ await fetch(API_BASE + "/api/auth/logout", { method:"POST", credentials:"include", headers: csrfHeaders() }); }catch(e){}
   clearAuth();
@@ -1024,7 +1550,17 @@ async function saveProject(p){
     headers: Object.assign({ "Content-Type": "application/json" }, csrfHeaders()),
     body: JSON.stringify(p)
   });
-  if(!res.ok) throw new Error("Could not save project");
+  if(!res.ok){
+    // 2026-09-05 (Denis: "publishing failing") — this used to throw a flat
+    // "Could not save project" no matter WHY the save failed, and the
+    // caller's toast then said "Is the backend running?" — actively
+    // misleading for the most common real cause (403 "verify your email
+    // before publishing"), which reads as a backend outage when it's
+    // actually a one-click fix. Surface the server's real detail text.
+    var msg = "Could not save project";
+    try{ var body = await res.json(); if(body && body.detail) msg = typeof body.detail === "string" ? body.detail : msg; }catch(e){}
+    throw new Error(msg);
+  }
   return res.json();
 }
 async function loadProject(id){
@@ -1103,6 +1639,24 @@ async function fetchRepoContext(owner, repo){
   }catch(e){}
   return ctx;
 }
+// 2026-09-05 (Denis: "make sure ai takes in consideration github stars of
+// projects") — fetchRepoContext() above already fetches stars/language/
+// contributors, but the two call sites building the "repoContext" text
+// actually sent to the rating council were only ever including
+// readme/description, silently dropping everything else it fetched. This
+// is the one shared place that turns the full ctx object into the text
+// block the AI actually reads, so stars (and language/contributors) are
+// now always in what the judges see.
+function repoContextToText(ctx){
+  if(!ctx) return "";
+  var lines = [];
+  if(ctx.language) lines.push("Primary language: " + ctx.language);
+  if(typeof ctx.stars === "number") lines.push("GitHub stars: " + ctx.stars);
+  if(typeof ctx.contributors === "number") lines.push("Contributors: " + ctx.contributors);
+  if(ctx.description) lines.push("Repo description: " + ctx.description);
+  if(ctx.readme) lines.push("\nREADME:\n" + ctx.readme);
+  return lines.join("\n");
+}
 
 /* ---------------- analytics (first-party, no third-party tracker) ----------------
    Fire-and-forget: a failed analytics call must never surface to the user
@@ -1124,7 +1678,16 @@ async function callClaude(messages, system, maxTokens){
     method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
     body: JSON.stringify({ system: system, messages: messages, maxTokens: maxTokens || 1200 })
   });
-  if(res.status === 503){ throw new Error("NOT_CONFIGURED"); }
+  if(res.status === 503){
+    // 2026-09-05 (Denis: "ai isnt working... fix it once and for all") —
+    // call_llm() on the backend now distinguishes a genuinely-unconfigured
+    // server from every provider just having a bad moment (quota/outage),
+    // sending a different `detail` string for each. This used to collapse
+    // both into the same misleading "not set up" message even when the
+    // key WAS configured and it was really a transient rate limit.
+    var body503 = null; try{ body503 = await res.json(); }catch(e){}
+    throw new Error((body503 && body503.detail === "AI_BUSY") ? "AI_BUSY" : "NOT_CONFIGURED");
+  }
   if(res.status === 429){
     // The backend is the real cap enforcer (10/24h free, 300/24h pro, plus
     // any referral bonus messages) — this can fire even when the client's
@@ -1143,6 +1706,9 @@ async function callClaude(messages, system, maxTokens){
 function friendlyAiError(e){
   if(e && e.message === "NOT_CONFIGURED"){
     return "The AI isn't set up yet on this server — whoever runs this SourceVenture instance needs to add GEMINI_API_KEY or ANTHROPIC_API_KEY in backend/.env. This isn't something you can fix by retrying.";
+  }
+  if(e && e.message === "AI_BUSY"){
+    return "The AI is getting a lot of requests right now — this usually clears in under a minute. Try again shortly.";
   }
   if(e && e.message === "RATE_LIMITED"){
     return e.detail || "Daily AI limit reached — try again after it resets.";
@@ -1196,6 +1762,9 @@ const ROUTES = [
   { test:/^#\/summary\/([^\/]+)$/, name:"summary" },
   { test:/^#\/plan\/([^\/]+)$/, name:"plan" },
   { test:/^#\/investors$/, name:"investors" },
+  { test:/^#\/notifications$/, name:"notifications" },
+  { test:/^#\/docs$/, name:"docs" },
+  { test:/^#\/support$/, name:"support" },
   { test:/^#\/settings$/, name:"settings" },
   // Allows an optional ?query (e.g. ?checkout=success from the Stripe
   // redirect) after the tab name without it leaking into the captured
@@ -1220,6 +1789,14 @@ async function router(){
   if(!matched) matched = { name:"landing" };
   window.scrollTo(0,0);
   track("page_view", matched.name === "project" || matched.name === "coach" ? param : null);
+  // 2026-09-05: the generic help FAB and the coach page's own AI chat
+  // fight for the same bottom-right corner on a phone (confirmed live —
+  // even after shrinking/repositioning the FAB, its corner still grazed
+  // "Evaluate my idea"). The coach page is the one place a user is
+  // already mid-conversation with an AI they can just ask directly, so
+  // hiding the general-purpose help FAB there (mobile only, see CSS) is
+  // an actual improvement, not just a workaround.
+  document.body.classList.toggle("is-coach-route", matched.name === "coach");
 
   var root = $("root");
   if(matched.name === "landing"){
@@ -1246,6 +1823,18 @@ async function router(){
     return;
   }
 
+  // 2026-09-05 (Denis: "add documentation and support and help all
+  // functioning") — both used to be sidenav links that just popped a
+  // "not part of this preview" toast. Real content now, public (no
+  // login needed, same as privacy/terms) since a prospective founder
+  // deciding whether to sign up is exactly who'd want to read these.
+  if(matched.name === "docs" || matched.name === "support"){
+    root.innerHTML = '<div id="landing-nav"><div class="wrap"><a href="#/" class="tb-title">SourceVenture</a>' + themeToggleHtml() + '</div></div>' +
+      '<div class="legal-page">' + (matched.name === "docs" ? docsHtml() : supportHtml()) + '</div>' +
+      '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span class="foot-links"><a href="#" onclick="event.preventDefault();nav(\'#/docs\');">Documentation</a><a href="#" onclick="event.preventDefault();nav(\'#/support\');">Support</a><a href="#" onclick="event.preventDefault();nav(\'#/privacy\');">Privacy</a><a href="#" onclick="event.preventDefault();nav(\'#/terms\');">Terms</a></span></div></footer>';
+    return;
+  }
+
   if(!isLoggedIn()){
     root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
       '<div class="canvas" style="padding-top:100px;text-align:center;">' +
@@ -1256,10 +1845,32 @@ async function router(){
     return;
   }
 
+  // 2026-09-05 (Denis: "make sure u cant continue to dashboard unlesss
+  // email confirmed") — was previously allowed on purpose (signup's own
+  // docstring: "real email confirmation isn't required to start using the
+  // app"), only the actual publish action was gated. Denis has now
+  // explicitly asked for the stricter version, so the whole app shell is
+  // blocked here instead — same chokepoint as the signed-out block above,
+  // just one check further in. Resend + log out stay reachable so an
+  // unverified user isn't genuinely stuck.
+  if(!STATE.auth.user.emailVerified){
+    root.innerHTML = '<div id="topbar"><div class="tb-left">' + brandHtml("#/") + '</div></div>' +
+      '<div class="canvas" style="padding-top:100px;text-align:center;">' +
+        '<h1 class="page-title">Verify your email to continue</h1>' +
+        '<p class="page-sub" style="margin:0 auto 24px;">We sent a link to <strong>' + escapeHtml(STATE.auth.user.email) + '</strong>. Click it, then come back here.</p>' +
+        '<div style="display:flex;gap:10px;justify-content:center;"><button class="btn btn-ghost" id="verify-gate-resend" onclick="resendVerificationEmail(this)">Resend email</button><button class="btn btn-primary" onclick="doLogout()">Log out</button></div>' +
+        '<p class="mono muted" style="font-size:11px;margin-top:20px;">This page updates on its own the moment the link is clicked — on this device or any other, no need to refresh.</p>' +
+      '</div>';
+    startVerifyGatePoll();
+    return;
+  }
+  stopVerifyGatePoll();
+
   root.innerHTML = appShellHtml(matched.name);
   var main = $("main");
   main.innerHTML = '<div class="skel" style="height:300px;"></div>';
   markActiveNav(matched.name);
+  refreshNotifBadge();
   try{
     if(matched.name === "dashboard") await renderDashboard(main);
     else if(matched.name === "projects") await renderProjectsList(main);
@@ -1269,6 +1880,7 @@ async function router(){
     else if(matched.name === "summary") await renderSummary(main, param);
     else if(matched.name === "plan") await renderBusinessPlan(main, param);
     else if(matched.name === "investors") await renderInvestors(main);
+    else if(matched.name === "notifications") await renderNotifications(main);
     else if(matched.name === "settings") await renderSettings(main, param || "account");
     else if(matched.name === "admin") await renderAdmin(main);
   }catch(e){
@@ -1284,35 +1896,80 @@ function errorBlock(e){
   return '<div class="empty-state"><h3>Something went wrong</h3><p>' + escapeHtml((e && e.message) || "Try again.") + '</p><button class="btn btn-ghost" style="margin-top:14px;" onclick="router()">Try again</button></div>';
 }
 
+// Shown on drill-down pages that aren't themselves in the sidenav (a
+// project's detail/coach/summary, new-project) — Denis: "put a back arrow
+// so people can get back to pages." Plain history.back() rather than a
+// hand-maintained parent-route map: it always returns to wherever the
+// user actually came from, which is what "back" means for a browser-tab
+// app regardless of how they navigated in.
+var BACK_ARROW_ROUTES = ["project", "coach", "summary", "new"];
+// 2026-09-05 (Denis: "dont like the header layout in mobile") — on
+// mobile, the wordmark and "Founder workspace" badge both hide (see CSS)
+// to fit the new hamburger, but that left a dead gap with nothing telling
+// you which page you're actually on (the sidenav's own active-link state
+// is now hidden inside the drawer). This fills that gap with real
+// context instead of just empty space.
+var ROUTE_LABELS = {
+  dashboard:"Overview", projects:"Projects", investors:"Investors", settings:"Settings",
+  admin:"Admin", new:"New Project", coach:"Coach", project:"Project",
+  summary:"Investor Summary", plan:"Business Plan", notifications:"Notifications",
+};
 function appShellHtml(routeName){
+  var showBack = BACK_ARROW_ROUTES.indexOf(routeName) !== -1;
   return '<div id="topbar">' +
-      '<div class="tb-left">' + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span></div>' +
+      '<div class="tb-left">' +
+        '<button class="tb-icon tb-hamburger" title="Menu" onclick="toggleSidenav();"><span class="material-symbols-outlined">menu</span></button>' +
+        (showBack ? '<button class="tb-icon" title="Back" onclick="history.back();" style="margin-right:4px;"><span class="material-symbols-outlined">arrow_back</span></button>' : '') + brandHtml("#/") + '<div class="tb-divider"></div><span class="tb-badge">Founder workspace</span>' +
+        (ROUTE_LABELS[routeName] ? '<span class="tb-page-label">' + ROUTE_LABELS[routeName] + '</span>' : '') +
+      '</div>' +
       '<div class="tb-right">' +
         themeToggleHtml() +
-        '<button class="tb-icon" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
-        '<button class="tb-icon" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
+        '<button class="tb-icon tb-sync" title="Sync" onclick="showToast(\'Everything here is already live.\')"><span class="material-symbols-outlined">sync</span></button>' +
+        '<button class="tb-icon tb-account" title="Account" onclick="nav(\'#/settings\')"><span class="material-symbols-outlined">account_circle</span></button>' +
       '</div>' +
     '</div>' +
     '<div class="app-layout">' +
-      '<nav id="sidenav">' +
+      '<div id="sidenav-overlay" onclick="toggleSidenav(false);"></div>' +
+      '<nav id="sidenav" onclick="if(event.target.closest(\'a[data-r]\')) toggleSidenav(false);">' +
         '<a href="#/settings" class="sn-head sn-head-account">' + avatarHtml(STATE.auth && STATE.auth.user, 40) +
-          '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") + '</h1><p class="mono">' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.email) || "") + '</p></div></a>' +
+          '<div><h1>' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.name) || "Account") +
+            ((STATE.auth && STATE.auth.user && STATE.auth.user.plan === "pro") ? '<span class="sn-pro-pill">PRO</span>' : "") +
+          '</h1><p class="mono">' + escapeHtml((STATE.auth && STATE.auth.user && STATE.auth.user.email) || "") + '</p></div></a>' +
         '<div class="sn-newbtn"><button class="btn btn-primary btn-block" onclick="nav(\'#/new\')"><span class="material-symbols-outlined" style="font-size:16px;">add</span>New Project</button></div>' +
         '<div class="sn-links">' +
           '<a data-r="dashboard" href="#/dashboard"><span class="material-symbols-outlined">dashboard</span>Overview</a>' +
           '<a data-r="projects" href="#/projects"><span class="material-symbols-outlined">folder</span>Projects</a>' +
           '<a data-r="investors" href="#/investors"><span class="material-symbols-outlined">handshake</span>Investors</a>' +
+          '<a data-r="notifications" href="#/notifications"><span class="material-symbols-outlined">notifications</span>Notifications<span id="sn-notif-badge" class="sn-notif-badge" style="display:none;"></span></a>' +
           '<a data-r="settings" href="#/settings"><span class="material-symbols-outlined">settings</span>Settings</a>' +
           ((STATE.auth && STATE.auth.user && STATE.auth.user.isAdmin) ?
             '<a data-r="admin" href="#/admin"><span class="material-symbols-outlined">shield_person</span>Admin</a>' : '') +
         '</div>' +
         '<div class="sn-foot">' +
-          '<a href="#" onclick="event.preventDefault();showToast(\'Docs are not part of this preview.\');"><span class="material-symbols-outlined" style="font-size:18px;">menu_book</span>Documentation</a>' +
-          '<a href="#" onclick="event.preventDefault();showToast(\'This preview has no live support channel.\');"><span class="material-symbols-outlined" style="font-size:18px;">help_outline</span>Support</a>' +
+          '<a href="#" onclick="event.preventDefault();toggleSidenav(false);nav(\'#/docs\');"><span class="material-symbols-outlined" style="font-size:18px;">menu_book</span>Documentation</a>' +
+          '<a href="#" onclick="event.preventDefault();toggleSidenav(false);nav(\'#/support\');"><span class="material-symbols-outlined" style="font-size:18px;">help_outline</span>Support</a>' +
         '</div>' +
       '</nav>' +
       '<main id="main"></main>' +
     '</div>';
+}
+// 2026-09-05 (Denis: "dashboard and ai uis and header... very unoptimized
+// mobile"): #sidenav was flatly `display:none` under 900px with nothing
+// built to replace it — once logged in on a phone, there was no way to
+// reach Projects/Investors/Settings/Admin at all except editing the URL
+// by hand. Now a real slide-in drawer, toggled by the new hamburger
+// button in the topbar (mobile-only, see .tb-hamburger CSS). Auto-closes
+// on navigating to a different route already (appShellHtml() re-renders
+// #sidenav from scratch, dropping the .open class); the nav delegated
+// onclick above covers the same-route re-click case too.
+function toggleSidenav(force){
+  var sn = $("sidenav"), ov = $("sidenav-overlay");
+  if(!sn || !ov) return;
+  var open = force !== undefined ? force : !sn.classList.contains("open");
+  sn.classList.toggle("open", open);
+  ov.classList.toggle("show", open);
+  document.body.classList.toggle("sidenav-open", open);
+  document.body.style.overflow = open ? "hidden" : "";
 }
 function markActiveNav(routeName){
   document.querySelectorAll("#sidenav a[data-r]").forEach(function(a){
@@ -1325,11 +1982,29 @@ function markActiveNav(routeName){
    ============================================================ */
 async function renderLanding(root){
   var published = await loadAllPublishedProjects();
+  var landingStats = await loadPublicStats();
+  var lsUsers = landingStats.totalUsers, lsProjects = published.length;
   root.innerHTML =
   '<nav id="landing-nav"><div class="wrap">' +
     brandHtml(null) +
-    '<div class="ln-links"><a href="#how">Product</a><a href="#how">Features</a><a href="#investors-sec">Solutions</a><a href="#pricing-sec">Pricing</a></div>' +
-    '<div style="display:flex;gap:10px;align-items:center;">' +
+    // 2026-09-05 (Denis: "header shortcuts... click one it refreshes page
+    // and only second click goes to section") — these were real <a
+    // href="#id"> anchors, which collide with the app's own hash router:
+    // the URL change fires the router's hashchange listener first, which
+    // finds no matching ROUTE, falls back to re-rendering the whole
+    // landing page from scratch (wiping the in-progress native anchor
+    // scroll and resetting scroll to top), and only the second click —
+    // hash unchanged, so no re-render — lets the browser's native anchor
+    // scroll actually happen. scrollIntoView() on click sidesteps the
+    // router entirely, matching the pattern the hero's own "See how it
+    // works" button already used.
+    '<div class="ln-links">' +
+      '<a href="#how" onclick="event.preventDefault();document.getElementById(\'how\').scrollIntoView({behavior:\'smooth\'});">Product</a>' +
+      '<a href="#how" onclick="event.preventDefault();document.getElementById(\'how\').scrollIntoView({behavior:\'smooth\'});">Features</a>' +
+      '<a href="#investors-sec" onclick="event.preventDefault();document.getElementById(\'investors-sec\').scrollIntoView({behavior:\'smooth\'});">Solutions</a>' +
+      '<a href="#pricing-sec" onclick="event.preventDefault();document.getElementById(\'pricing-sec\').scrollIntoView({behavior:\'smooth\'});">Pricing</a>' +
+    '</div>' +
+    '<div class="ln-actions">' +
       themeToggleHtml() +
       (isLoggedIn() ?
         '<button class="btn btn-primary btn-sm" onclick="nav(\'#/dashboard\')">Dashboard</button>' :
@@ -1349,7 +2024,7 @@ async function renderLanding(root){
       '</div>' +
       '<div class="mono muted" style="font-size:11.5px;">' + published.length + ' projects synced · coach powered by a private Python backend</div>' +
     '</div>' +
-    '<div class="code-panel" id="hero-code-panel">' + heroPanelInner(0) + '</div>' +
+    '<div class="code-panel reveal" style="transition-delay:.2s;" id="hero-code-panel">' + heroPanelInner(0) + '</div>' +
   '</div></header>' +
 
   '<section class="landing-sec" id="how"><div class="wrap">' +
@@ -1362,13 +2037,24 @@ async function renderLanding(root){
   '</div></section>' +
 
   '<section class="landing-sec" id="investors-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Investor directory</div><h2>Opens at real scale, not before.</h2><p>' + published.length + ' / ' + DIRECTORY_THRESHOLD + ' projects published right now. An empty directory hurts trust more than it helps anyone.</p></div>' +
-    '<button class="btn btn-ghost" onclick="nav(\'#/investors\')">View investor portal</button>' +
+    '<div class="section-head reveal"><div class="eyebrow">Investor directory</div><h2>Opens at real scale, not before.</h2><p>' + lsProjects + ' / ' + DIRECTORY_THRESHOLD + ' projects published right now. An empty directory hurts trust more than it helps anyone.</p></div>' +
+    // 2026-09-05 (Denis: "investors tab put in home page something small
+    // the bars and shit saying how much projects and users left") —
+    // compact version of the same real progress bars the investors page
+    // shows, so the cohort countdown is visible without leaving the
+    // landing page. Reuses .prog-wrap/.prog-track/.prog-fill as-is.
+    '<div class="reveal" style="max-width:420px;margin:0 auto 22px;transition-delay:.06s;">' +
+      '<div class="prog-wrap"><div class="prog-top"><span>Users</span><span class="now">' + lsUsers + ' / ' + USER_THRESHOLD + ' — ' + Math.max(0, USER_THRESHOLD - lsUsers) + ' left</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (lsUsers/USER_THRESHOLD)*100) + '%;"></div></div></div>' +
+      '<div class="prog-wrap" style="margin-top:10px;"><div class="prog-top"><span>Projects</span><span class="now">' + lsProjects + ' / ' + DIRECTORY_THRESHOLD + ' — ' + Math.max(0, DIRECTORY_THRESHOLD - lsProjects) + ' left</span></div>' +
+        '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (lsProjects/DIRECTORY_THRESHOLD)*100) + '%;"></div></div></div>' +
+    '</div>' +
+    '<button class="btn btn-ghost reveal" style="transition-delay:.1s;" onclick="nav(\'#/investors\')">View investor portal</button>' +
   '</div></section>' +
 
   '<section class="landing-sec" id="pricing-sec"><div class="wrap">' +
-    '<div class="section-head"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan.</p></div>' +
-    '<button class="btn btn-ghost" onclick="nav(\'#/new\')">Start free</button>' +
+    '<div class="section-head reveal"><div class="eyebrow">Pricing</div><h2>Free, with a real limit.</h2><p>' + FREE_DAILY_CAP + ' coach messages per rolling 24h on the free plan, disclosed and enforced. SourceVenture Pro ($15/mo) raises that to ' + PRO_DAILY_CAP + '/24h plus an AI-generated business plan. <strong style="color:var(--primary);">The first ' + USER_THRESHOLD + ' founders get 50% off Pro</strong>, locked in until Phase 2 — see the investor cohort page for the live count.</p></div>' +
+    '<button class="btn btn-ghost reveal" style="transition-delay:.1s;" onclick="nav(\'#/new\')">Start free</button>' +
   '</div></section>' +
 
   '<footer><div class="wrap foot-row"><span>SourceVenture — self-hosted preview</span><span>AI coach proxied through the Python backend</span>' +
@@ -1429,6 +2115,7 @@ function projectCardHtml(p){
    ============================================================ */
 async function renderNewProject(main){
   await ensureMe();
+  NP_IMAGES = { logoDataUrl: null, bannerDataUrl: null };
   main.innerHTML = '<div class="canvas">' +
     '<div class="eyebrow">New project</div><h1 class="page-title">Publish a project</h1>' +
     '<p class="page-sub stack-lg">Free. A public GitHub repo gives your coach extra real-world context, but it\'s optional — the AI works from whatever you give it.</p>' +
@@ -1441,11 +2128,38 @@ async function renderNewProject(main){
       '<div class="field"><label>Problem you\'re solving</label><textarea id="np-problem" rows="3" placeholder="Optional, but it sharpens every piece of AI feedback — who has this problem, how big is it, why does it matter now."></textarea></div>' +
       '<div class="field"><label>Team</label><textarea id="np-team" rows="2" placeholder="Optional — who\'s building this and why they\'re the right people for it."></textarea></div>' +
       '<div class="field"><label>GitHub repo URL <span class="muted" style="font-weight:400;">(optional)</span></label><input type="text" id="np-repo" placeholder="https://github.com/owner/repo" /><div class="hint">If given, we fetch the public description, README, top-level files and contributor count as extra evidence.</div></div>' +
+      '<div class="field"><label>Logo <span class="muted" style="font-weight:400;">(optional)</span></label>' +
+        '<div style="display:flex;align-items:center;gap:12px;">' +
+          '<div id="np-logo-preview" style="width:56px;height:56px;border-radius:12px;background:var(--surface-highest);flex:none;overflow:hidden;display:flex;align-items:center;justify-content:center;"><span class="material-symbols-outlined muted">image</span></div>' +
+          '<input type="file" id="np-logo-file" accept="image/*" onchange="handleProjectImagePick(event,\'logo\')" />' +
+        '</div></div>' +
+      '<div class="field"><label>Banner <span class="muted" style="font-weight:400;">(optional)</span></label>' +
+        '<div id="np-banner-preview" style="width:100%;aspect-ratio:3/1;border-radius:12px;background:var(--surface-highest);overflow:hidden;display:flex;align-items:center;justify-content:center;margin-bottom:8px;"><span class="material-symbols-outlined muted">panorama</span></div>' +
+        '<input type="file" id="np-banner-file" accept="image/*" onchange="handleProjectImagePick(event,\'banner\')" />' +
+      '</div>' +
       '<button class="btn btn-primary btn-block" id="np-submit" onclick="submitNewProject()">Publish & open my coach</button>' +
     '</div>' +
   '</div>';
 }
 
+// Same FileReader->base64 pattern as handleAvatarPick, just holding the
+// result in module state (NP_IMAGES) until the actual publish call,
+// since a project doesn't exist server-side yet at picking time.
+var NP_IMAGES = { logoDataUrl: null, bannerDataUrl: null };
+function handleProjectImagePick(ev, kind){
+  var file = ev.target.files[0];
+  if(!file) return;
+  var maxBytes = kind === "logo" ? 600 * 1024 : 1500 * 1024;
+  if(file.size > maxBytes){ showToast("That image is too large — under ~" + Math.round(maxBytes/1024) + "KB please.", true); ev.target.value = ""; return; }
+  var reader = new FileReader();
+  reader.onload = function(){
+    var key = kind === "logo" ? "logoDataUrl" : "bannerDataUrl";
+    NP_IMAGES[key] = reader.result;
+    var preview = $(kind === "logo" ? "np-logo-preview" : "np-banner-preview");
+    preview.innerHTML = '<img src="' + reader.result + '" style="width:100%;height:100%;object-fit:cover;" />';
+  };
+  reader.readAsDataURL(file);
+}
 async function submitNewProject(){
   var name = $("np-name").value.trim();
   var tagline = $("np-tagline").value.trim();
@@ -1478,7 +2192,8 @@ async function submitNewProject(){
     repoUrl: parsed ? repoUrl : null, owner: parsed ? parsed.owner : null, repo: parsed ? parsed.repo : null,
     language:null, stars:null, contributors:null, files:[], readmeOk:false,
     status: "published", createdAt: Date.now(), publishedAt: Date.now(), repoSyncedAt: null,
-    investorSummary: null, investorSummaryDraft: null, investorSummaryApprovedAt: null, signal: null
+    investorSummary: null, investorSummaryDraft: null, investorSummaryApprovedAt: null, signal: null,
+    logoDataUrl: NP_IMAGES.logoDataUrl || null, bannerDataUrl: NP_IMAGES.bannerDataUrl || null
   };
 
   if(parsed){
@@ -1503,13 +2218,34 @@ async function submitNewProject(){
     nav("#/coach/" + project.id);
   }catch(e){
     btn.disabled = false; btn.textContent = "Publish & open my coach";
-    showToast("Publishing failed. Is the backend running? Try again.", true);
+    showToast((e && e.message) || "Publishing failed — try again.", true);
   }
 }
 
 /* ============================================================
    PROJECT DETAIL
    ============================================================ */
+// Change logo/banner on an EXISTING project — loads the current project,
+// patches just the one image field, saves via the same PUT the rest of
+// project editing uses, then re-renders so the new image shows immediately.
+async function handleProjectImageUpdate(ev, projectId, kind){
+  var file = ev.target.files[0];
+  if(!file) return;
+  var maxBytes = kind === "logo" ? 600 * 1024 : 1500 * 1024;
+  if(file.size > maxBytes){ showToast("That image is too large — under ~" + Math.round(maxBytes/1024) + "KB please.", true); return; }
+  var reader = new FileReader();
+  reader.onload = async function(){
+    try{
+      var p = await loadProject(projectId);
+      if(!p) throw new Error("Project not found");
+      p[kind === "logo" ? "logoDataUrl" : "bannerDataUrl"] = reader.result;
+      await saveProject(p);
+      showToast((kind === "logo" ? "Logo" : "Banner") + " updated.");
+      router();
+    }catch(e){ showToast("Couldn't save that image. Try again.", true); }
+  };
+  reader.readAsDataURL(file);
+}
 async function renderProjectDetail(main, id){
   var p = await loadProject(id);
   if(!p){
@@ -1518,8 +2254,23 @@ async function renderProjectDetail(main, id){
   }
   main.innerHTML = '<div class="canvas">' +
     '<div class="eyebrow">Project</div>' +
+    // Banner — a real hero strip when set, an empty upload prompt otherwise
+    // (Denis: "build the banner thing"). Same instant-save-on-pick pattern
+    // as the account avatar — pick a file, it uploads and re-renders, no
+    // separate "save" step.
+    '<div id="proj-banner-wrap" style="position:relative;border-radius:16px;overflow:hidden;margin-bottom:16px;height:160px;background:var(--surface-highest);' + (p.bannerDataUrl ? '' : 'display:flex;align-items:center;justify-content:center;') + '">' +
+      (p.bannerDataUrl ? '<img src="' + p.bannerDataUrl + '" style="width:100%;height:100%;object-fit:cover;" />' : '<span class="muted" style="font-size:12.5px;">No banner set</span>') +
+      '<label class="btn btn-ghost btn-sm" style="position:absolute;bottom:10px;right:10px;cursor:pointer;">' + (p.bannerDataUrl ? "Change banner" : "Add banner") +
+        '<input type="file" accept="image/*" style="display:none;" onchange="handleProjectImageUpdate(event,\'' + p.id + '\',\'banner\')" /></label>' +
+    '</div>' +
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">' +
-      '<div><h1 class="page-title">' + escapeHtml(p.name) + '</h1><p class="page-sub">' + escapeHtml(p.tagline||"") + '</p></div>' +
+      '<div style="display:flex;gap:14px;align-items:center;">' +
+        '<label style="position:relative;cursor:pointer;flex:none;">' +
+          (p.logoDataUrl ? '<img src="' + p.logoDataUrl + '" style="width:52px;height:52px;border-radius:12px;object-fit:cover;" />' : '<div style="width:52px;height:52px;border-radius:12px;background:var(--surface-highest);display:flex;align-items:center;justify-content:center;"><span class="material-symbols-outlined muted" style="font-size:20px;">image</span></div>') +
+          '<input type="file" accept="image/*" style="display:none;" onchange="handleProjectImageUpdate(event,\'' + p.id + '\',\'logo\')" />' +
+        '</label>' +
+        '<div><h1 class="page-title">' + escapeHtml(p.name) + '</h1><p class="page-sub">' + escapeHtml(p.tagline||"") + '</p></div>' +
+      '</div>' +
       '<div style="display:flex;gap:8px;"><button class="btn btn-ghost btn-sm" onclick="nav(\'#/coach/' + p.id + '\')">Open Coach</button><button class="btn btn-ghost btn-sm" onclick="nav(\'#/summary/' + p.id + '\')">Investor Summary</button></div>' +
     '</div>' +
     (p.repo ?
@@ -1574,7 +2325,8 @@ async function renderCoach(main, id){
         '</div>' +
       '</div>' +
       '<div class="coach-side">' +
-        '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button></div>' +
+        '<div class="coach-side-block"><button class="btn btn-primary btn-sm btn-block" onclick="requestIdeaEvaluation()"><span class="material-symbols-outlined" style="font-size:15px;">rate_review</span>Evaluate my idea</button>' +
+          '<button class="btn btn-ghost btn-sm btn-block" style="margin-top:8px;" onclick="requestPitchImprovement()"><span class="material-symbols-outlined" style="font-size:15px;">auto_fix_high</span>Improve my pitch</button></div>' +
         '<div class="coach-side-block"><h4>Source Score</h4><div id="rating-block"><div class="skel" style="height:60px;"></div></div></div>' +
         (p.repo ?
         '<div class="coach-side-block"><h4>Project context</h4><div class="metric-row"><span>Repo</span><span class="mval mono" style="font-size:11px;">' + escapeHtml(p.owner) + '/' + escapeHtml(p.repo) + '</span></div>' +
@@ -1608,13 +2360,56 @@ async function renderCoach(main, id){
   }
 }
 
+// 2026-09: "make it so u can better the pitch with ai... the ai in answer
+// gives a button to implement automatically." Rather than trying to parse
+// arbitrary free-form advice out of every reply, the pitch-improvement
+// button (below) asks the coach — as a normal user message, not a change
+// to its system prompt/behavior — to wrap its suggested rewrite in
+// <<<PITCH>>>...<<<END_PITCH>>> markers. Any assistant reply containing
+// that marker gets a real "Apply to pitch" button; nothing else changes
+// about how replies render.
+var PITCH_MARKER_RE = /<<<PITCH>>>([\s\S]*?)<<<END_PITCH>>>/;
 function renderCoachMessages(){
   var scroll = $("coach-scroll");
   if(!scroll) return;
-  scroll.innerHTML = COACH.messages.map(function(m){
-    return '<div class="cmsg ' + (m.role==="user"?"user":"") + '"><div class="cmeta">' + (m.role==="user"?"YOU":"COACH") + ' · ' + new Date(m.ts||Date.now()).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + '</div><div class="cbody">' + renderRichText(m.content) + '</div></div>';
+  scroll.innerHTML = COACH.messages.map(function(m, i){
+    var match = m.role === "assistant" ? m.content.match(PITCH_MARKER_RE) : null;
+    var displayText = match ? m.content.replace(PITCH_MARKER_RE, "").trim() : m.content;
+    var applyBtn = match ? '<button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="applyPitchSuggestion(' + i + ')">Apply to pitch</button>' : "";
+    return '<div class="cmsg ' + (m.role==="user"?"user":"") + '"><div class="cmeta">' + (m.role==="user"?"YOU":"COACH") + ' · ' + new Date(m.ts||Date.now()).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) + '</div><div class="cbody">' + renderRichText(displayText) + applyBtn + '</div></div>';
   }).join("");
   scroll.scrollTop = scroll.scrollHeight;
+}
+// Held in a module var rather than round-tripped through an HTML
+// attribute string — a pitch can contain quotes/newlines that would break
+// out of an onclick="..." attribute if serialized inline.
+var PENDING_PITCH_SUGGESTION = null;
+function applyPitchSuggestion(msgIndex){
+  var m = COACH.messages[msgIndex];
+  var match = m && m.content.match(PITCH_MARKER_RE);
+  if(!match) return;
+  PENDING_PITCH_SUGGESTION = match[1].trim();
+  openModal(
+    '<h3>Apply this pitch?</h3>' +
+    '<p class="modal-sub">This replaces your current pitch. You can always ask the coach for another revision afterward.</p>' +
+    '<div class="card" style="padding:14px 16px;margin:12px 0;max-height:220px;overflow-y:auto;"><p style="font-size:13px;white-space:pre-wrap;margin:0;">' + escapeHtml(PENDING_PITCH_SUGGESTION) + '</p></div>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="confirmApplyPitch()">Apply</button></div>'
+  );
+}
+async function confirmApplyPitch(){
+  var newPitch = PENDING_PITCH_SUGGESTION;
+  closeModal();
+  if(!newPitch) return;
+  try{
+    COACH.project.pitch = newPitch;
+    await saveProject(COACH.project);
+    showToast("Pitch updated.");
+  }catch(e){ showToast((e && e.message) || "Couldn't save the new pitch. Try again.", true); }
+}
+async function requestPitchImprovement(){
+  var input = $("coach-input");
+  input.value = "Rewrite my pitch to be sharper and stronger, based on everything you know about this startup. Give a short note first on what you changed and why, then put ONLY the final improved pitch text between the markers <<<PITCH>>> and <<<END_PITCH>>>.";
+  await sendCoachMessage();
 }
 function appendCoachMsg(role, content, skipStore){
   COACH.messages.push({ role:role, content:content, ts:Date.now() });
@@ -1664,6 +2459,25 @@ function requestIdeaEvaluation(){
    auto-rerate (fires when you save real pitch changes, no button needed)
    actually shows up here. ---- */
 function scoreColor(n){ return n>=70 ? "var(--primary)" : n>=45 ? "var(--tertiary)" : "var(--error)"; }
+// Circular ring for the overall Source Score — Denis: "like a circle ui
+// idk." Plain SVG (no chart library — this project has no build step),
+// same 0-100 number the number-only version showed, just as a radial
+// progress ring instead of flat text. Sub-scores stay as bars (a 4-way
+// mini-ring grid at this size would be harder to read, not easier).
+function scoreRingHtml(score, size){
+  size = size || 108;
+  var stroke = Math.max(6, Math.round(size * 0.09));
+  var r = (size - stroke) / 2;
+  var c = 2 * Math.PI * r;
+  var offset = c * (1 - Math.max(0, Math.min(100, score)) / 100);
+  var color = scoreColor(score);
+  var mid = size / 2;
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" style="transform:rotate(-90deg);flex:none;">' +
+      '<circle cx="' + mid + '" cy="' + mid + '" r="' + r + '" fill="none" stroke="var(--surface-highest)" stroke-width="' + stroke + '" />' +
+      '<circle cx="' + mid + '" cy="' + mid + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + stroke + '" stroke-linecap="round" ' +
+        'stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '" style="transition:stroke-dashoffset .6s var(--ease-out-expo);" />' +
+    '</svg>';
+}
 function scoreBarHtml(label, val){
   return '<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;font-size:11px;color:var(--on-surface-variant);margin-bottom:3px;"><span>' + label + '</span><span class="mono">' + val + '</span></div>' +
     '<div style="height:5px;border-radius:20px;background:var(--surface-highest);overflow:hidden;"><div style="height:100%;width:' + val + '%;background:' + scoreColor(val) + ';border-radius:20px;transition:width .5s ease;"></div></div></div>';
@@ -1673,11 +2487,17 @@ function ratingBlockHtml(r, p){
     return '<button class="btn btn-ghost btn-sm btn-block" onclick="runRating(' + "'" + (p?p.id:"") + "'" + ')">Get my Source Score</button><p class="muted" style="font-size:11px;margin-top:6px;">A calibrated 0-100 score from a 3-judge AI council (VC, technical due-diligence, growth analyst), evaluating actual startup evidence — never likes, views or popularity.</p>';
   }
   var improvements = (r.improvements||[]).map(function(imp){ return '<li style="margin-bottom:4px;">' + escapeHtml(imp) + '</li>'; }).join("");
-  return '<div class="muted mono" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Source Score</div>' +
-    '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">' +
-      '<div style="font-family:var(--font-display);font-size:28px;color:' + scoreColor(r.overall) + ';">' + r.overall + '<span style="font-size:15px;">/100</span></div>' +
-      '<div class="muted" style="font-size:13px;">' + r.overall + '%</div></div>' +
-    '<p class="muted mono" style="font-size:10px;margin-bottom:12px;">' + (r.judges||3) + '-judge council · median score</p>' +
+  return '<div class="muted mono" style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px;">Source Score</div>' +
+    '<div style="display:flex;align-items:center;gap:16px;margin-bottom:6px;">' +
+      '<div style="position:relative;width:108px;height:108px;flex:none;">' + scoreRingHtml(r.overall, 108) +
+        '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">' +
+          '<span style="font-family:var(--font-display);font-size:26px;line-height:1;color:' + scoreColor(r.overall) + ';">' + r.overall + '</span>' +
+          '<span class="muted mono" style="font-size:10px;margin-top:2px;">/100</span>' +
+        '</div>' +
+      '</div>' +
+      '<div><div class="muted" style="font-size:15px;">' + r.overall + '%</div>' +
+        '<p class="muted mono" style="font-size:10px;margin-top:2px;">' + (r.judges||3) + '-judge council<br/>median score</p></div>' +
+    '</div>' +
     scoreBarHtml("Problem &amp; market", r.scores.problem_market) +
     scoreBarHtml("Differentiation", r.scores.differentiation) +
     scoreBarHtml("Execution signal", r.scores.execution_signal) +
@@ -1705,7 +2525,7 @@ async function runRating(id){
   block.innerHTML = '<div class="skel" style="height:70px;"></div><p class="muted" style="font-size:10px;margin-top:6px;">Asking 3 independent judges — takes a few seconds…</p>';
   try{
     if(!COACH.repoCtx && COACH.project){ COACH.repoCtx = await fetchRepoContext(COACH.project.owner, COACH.project.repo); }
-    var repoText = COACH.repoCtx ? (COACH.repoCtx.readme || COACH.repoCtx.description || "") : "";
+    var repoText = repoContextToText(COACH.repoCtx);
     track("rating_requested", id);
     var data = await rateProject(COACH.project, repoText);
     COACH.rating = data;
@@ -1965,7 +2785,7 @@ async function generateBusinessPlan(){
   if(btn){ btn.disabled = true; btn.textContent = "Generating…"; }
   if(el) el.innerHTML = '<div class="skel" style="height:160px;"></div><p class="mono muted" style="font-size:11px;margin-top:10px;">Writing a grounded, section-by-section plan — takes a bit longer than a chat reply…</p>';
   try{
-    var repoText = p.repo ? (p._repoCtxCache && p._repoCtxCache.readme ? p._repoCtxCache.readme.slice(0,4000) : null) : null;
+    var repoText = p.repo && p._repoCtxCache ? repoContextToText(p._repoCtxCache) : null;
     var res = await fetch(API_BASE + "/api/projects/" + encodeURIComponent(p.id) + "/business-plan", {
       method:"POST", credentials:"include", headers: Object.assign({ "Content-Type":"application/json" }, csrfHeaders()),
       body: JSON.stringify({ name: p.name, tagline: p.tagline || "", pitch: p.pitch || "", repoContext: repoText, problem: p.problem || null, team: p.team || null })
@@ -1998,20 +2818,94 @@ async function loadPublicStats(){
     return { totalUsers: 0, userThreshold: USER_THRESHOLD, publishedProjects: 0, projectThreshold: DIRECTORY_THRESHOLD };
   }
 }
+// 2026-09-05 (Denis: "remove everything active investor related except
+// from the countdown thing with the bars... remove the find the project
+// thing for now") — this page used to also show a "Find your match" AI
+// search tool and the full project directory table/application-status
+// flow, all of which imply a directory that's actually live to browse.
+// Since the cohort isn't open yet, that's more surface than the product
+// can back up right now. Stripped down to just the honest part: the
+// scarcity/countdown card with real progress bars and the notify-me ask.
+// renderDirList/findInvestorMatches/openInvestorApplyModal are left
+// defined below (dead code for now, not deleted) so this is a quick
+// revert once the directory is genuinely ready to reopen.
+/* ============================================================
+   NOTIFICATIONS CENTER
+   ============================================================ */
+// Fire-and-forget, called on every app-shell route render — keeps the
+// sidenav badge in sync with the real server-side unread count without
+// needing a live push channel. Silently no-ops if the badge element isn't
+// in the current DOM (e.g. mid-navigation) or the fetch fails.
+async function refreshNotifBadge(){
+  var badge = $("sn-notif-badge");
+  if(!badge) return;
+  try{
+    var res = await fetch(API_BASE + "/api/notifications", { credentials:"include" });
+    if(!res.ok) return;
+    var data = await res.json();
+    if(data.unread > 0){ badge.textContent = data.unread > 99 ? "99+" : String(data.unread); badge.style.display = "inline-block"; }
+    else { badge.style.display = "none"; }
+  }catch(e){}
+}
+var NOTIF_TYPE_ICON = {
+  referral_milestone: "military_tech", plan_changed: "workspace_premium", investor_decision: "handshake",
+};
+async function renderNotifications(main){
+  main.innerHTML = '<div class="canvas-wide"><div class="skel" style="height:200px;"></div></div>';
+  try{
+    var res = await fetch(API_BASE + "/api/notifications", { credentials:"include" });
+    var data = await res.json();
+    if(!res.ok) throw new Error("Could not load notifications");
+    main.innerHTML = '<div class="canvas-wide">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">' +
+        '<div><div class="eyebrow">Notifications</div><h1 class="page-title">Notifications</h1></div>' +
+        (data.unread > 0 ? '<button class="btn btn-ghost btn-sm" onclick="markAllNotificationsRead()">Mark all as read</button>' : '') +
+      '</div>' +
+      '<p class="page-sub stack-lg">Referral bonuses, plan changes, and investor decisions land here — not just a toast you might miss.</p>' +
+      (data.items.length === 0 ?
+        '<div class="empty-state"><h3>Nothing yet</h3><p>Real activity on your account — referral bonuses, plan changes, investor decisions — will show up here.</p></div>' :
+        '<div class="stack-lg" id="notif-list">' + data.items.map(notificationRowHtml).join("") + '</div>'
+      ) +
+    '</div>';
+  }catch(e){
+    main.innerHTML = errorBlock(e);
+  }
+}
+function notificationRowHtml(n){
+  var icon = NOTIF_TYPE_ICON[n.type] || "notifications";
+  var unread = !n.readAt;
+  return '<div class="card" style="padding:16px 18px;display:flex;gap:14px;align-items:flex-start;' + (unread ? 'border-color:var(--primary);' : '') + '" id="notif-row-' + n.id + '"' +
+    (unread ? ' onclick="markNotificationRead(\'' + n.id + '\')"' : '') + '>' +
+    '<span class="material-symbols-outlined" style="color:' + (unread ? "var(--primary)" : "var(--on-surface-variant)") + ';">' + icon + '</span>' +
+    '<div style="flex:1;min-width:0;">' +
+      '<div style="font-weight:600;font-size:14px;">' + escapeHtml(n.title) + (unread ? ' <span class="mono" style="font-size:10px;color:var(--primary);vertical-align:middle;">NEW</span>' : '') + '</div>' +
+      (n.body ? '<p class="muted" style="font-size:13px;margin:4px 0 0;">' + escapeHtml(n.body) + '</p>' : '') +
+      '<div class="mono muted" style="font-size:11px;margin-top:6px;">' + timeAgo(n.createdAt) + '</div>' +
+    '</div>' +
+  '</div>';
+}
+async function markNotificationRead(id){
+  try{
+    await fetch(API_BASE + "/api/notifications/" + encodeURIComponent(id) + "/read", { method:"POST", credentials:"include", headers: csrfHeaders() });
+  }catch(e){}
+  refreshNotifBadge();
+  router();
+}
+async function markAllNotificationsRead(){
+  try{
+    await fetch(API_BASE + "/api/notifications/read-all", { method:"POST", credentials:"include", headers: csrfHeaders() });
+    showToast("All caught up.");
+    router();
+  }catch(e){ showToast("Couldn't mark everything read. Try again.", true); }
+}
+
 async function renderInvestors(main){
   await ensureMe();
   var published = await loadAllPublishedProjects();
   var count = published.length;
   var stats = await loadPublicStats();
   var userCount = stats.totalUsers;
-  // Both real thresholds have to clear — matches the backend's own
-  // enforcement in /api/investors/directory (server-side, not just this
-  // display), so what's shown here can't drift from what's actually gated.
   var open = count >= DIRECTORY_THRESHOLD && userCount >= USER_THRESHOLD;
-  // Real server-side status now (was STATE.me.investorApplied — a
-  // localStorage flag with zero backend enforcement). See
-  // backend/main.py's investor_applications table + /api/investors/* routes.
-  var invStatus = isLoggedIn() ? (await myInvestorStatus()).status : "none";
 
   main.innerHTML = '<div class="canvas-wide">' +
     '<div class="eyebrow">Investors</div><h1 class="page-title">Investor Directory</h1>' +
@@ -2020,34 +2914,22 @@ async function renderInvestors(main){
     '<div class="card scarcity">' +
       '<div class="lock-badge"><span class="material-symbols-outlined" style="color:var(--primary);">' + (open ? "lock_open" : "lock_person") + '</span></div>' +
       '<h2>' + (open ? "Directory Open" : "Opening Soon") + '</h2>' +
-      '<p>' + (open ? "The initial cohort threshold has been reached. Approved investors can browse every published project below." : "The SourceVenture investor portal is highly curated. Access unlocks when the initial cohort reaches our threshold for market viability.") + '</p>' +
+      '<p>' + (open ? "The initial cohort threshold has been reached — we're finishing the review queue before opening access." : "The SourceVenture investor portal is highly curated. Access unlocks when the initial cohort reaches our threshold for market viability.") + '</p>' +
       '<div class="prog-wrap"><div class="prog-top"><span>Cohort Alpha — Users</span><span class="now">' + userCount + ' / ' + USER_THRESHOLD + ' Users</span></div>' +
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (userCount/USER_THRESHOLD)*100) + '%;"></div></div></div>' +
       '<div class="prog-wrap" style="margin-top:12px;"><div class="prog-top"><span>Cohort Alpha — Projects</span><span class="now">' + count + ' / ' + DIRECTORY_THRESHOLD + ' Projects</span></div>' +
         '<div class="prog-track"><div class="prog-fill" style="width:' + Math.min(100, (count/DIRECTORY_THRESHOLD)*100) + '%;"></div></div></div>' +
-      (invStatus === "approved" ?
-        '<div class="mono" style="font-size:11.5px;color:var(--primary);">Application approved — full access below.</div>' :
-       invStatus === "pending" ?
-        '<div class="mono" style="font-size:11.5px;color:var(--on-surface-variant);">Application pending review — a real queue now, no auto-approval.</div>' :
-        '<button class="btn btn-primary" onclick="openInvestorApplyModal()"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>' + (open ? "Apply for access" : "Notify me when access opens") + '</button>') +
-    '</div>' +
-
-    '<div class="card stack-lg" style="padding:24px;">' +
-      '<h3 style="font-size:16px;margin-bottom:4px;">Find your match</h3>' +
-      '<p class="muted" style="font-size:13px;margin-bottom:16px;">Describe what you\'re looking to invest in — our AI ranks published projects against it.</p>' +
-      '<div class="field"><label>What are you interested in?</label><textarea id="match-interests" rows="2" placeholder="e.g. developer tools for small teams, early-stage, technical founder"></textarea></div>' +
-      '<div class="field-row">' +
-        '<div class="field"><label>Min amount (USD)</label><input type="number" id="match-min" placeholder="10000" /></div>' +
-        '<div class="field"><label>Max amount (USD)</label><input type="number" id="match-max" placeholder="250000" /></div>' +
+      // Same cohort, same threshold — the first USER_THRESHOLD accounts
+      // that unlock the investor directory also lock in 50% off Pro until
+      // Phase 2. Real eligibility is tracked server-side at signup
+      // (users.is_founding_member); this is just the promo copy.
+      '<div class="card" style="padding:14px 16px;margin-top:14px;background:var(--accent-glow);border-color:var(--primary);">' +
+        '<p style="font-size:12.5px;margin:0;"><strong>Founding cohort discount</strong> — the first ' + USER_THRESHOLD + ' accounts get <strong>50% off SourceVenture Pro</strong> (locked in until Phase 2). ' +
+        (userCount < USER_THRESHOLD ? (USER_THRESHOLD - userCount) + ' spot' + (USER_THRESHOLD - userCount === 1 ? "" : "s") + ' left.' : "This cohort is full — founding pricing has closed.") + '</p>' +
       '</div>' +
-      '<button class="btn btn-primary" id="match-submit" onclick="findInvestorMatches()">Find matches</button>' +
-      '<div id="match-results" style="margin-top:18px;"></div>' +
+      '<button class="btn btn-primary" style="margin-top:18px;" onclick="openNotifyMeModal()"><span class="material-symbols-outlined" style="font-size:16px;">notifications_active</span>Notify me when access opens</button>' +
     '</div>' +
-
-    '<div id="dir-list"></div>' +
   '</div>';
-
-  renderDirList(published, open, invStatus === "approved");
 }
 
 async function findInvestorMatches(){
@@ -2137,6 +3019,32 @@ function openDirSummary(id){
   });
 }
 
+function openNotifyMeModal(){
+  // No account required — this is the lighter-weight "just email me" ask
+  // (Denis: "make it the notificate me button works"). Separate from
+  // openInvestorApplyModal below, which is the real full application and
+  // does require an account.
+  openModal('<h3>Get notified when the directory opens</h3><p class="modal-sub">We\'ll email you once the cohort threshold is reached — no account needed.</p>' +
+    '<div class="form-error" id="nm-error"></div>' +
+    '<div class="field"><label>Email</label><input type="email" id="nm-email" placeholder="you@example.com" /></div>' +
+    '<div class="modal-actions"><button class="btn btn-primary btn-block" id="nm-submit" onclick="submitNotifyMe()">Notify me</button></div>');
+}
+async function submitNotifyMe(){
+  var email = $("nm-email").value.trim();
+  var err = $("nm-error");
+  if(!email || email.indexOf("@") === -1){ err.textContent = "Enter a valid email."; err.classList.add("show"); return; }
+  var btn = $("nm-submit"); btn.disabled = true; btn.textContent = "Saving…";
+  try{
+    var res = await fetch(API_BASE + "/api/investors/notify-me", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: email }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error((data.detail && (typeof data.detail === "string" ? data.detail : "Invalid email")) || "Could not save");
+    closeModal();
+    showToast("You're on the list — we'll email you when it opens.");
+  }catch(e){
+    btn.disabled = false; btn.textContent = "Notify me";
+    err.textContent = e.message; err.classList.add("show");
+  }
+}
 function openInvestorApplyModal(){
   if(!isLoggedIn()){ nav("#/signin"); return; }
   openModal('<h3>Apply for investor access</h3><p class="modal-sub">Approval is required even after the cohort threshold is met — this is a real, manually-reviewed queue, not an instant unlock.</p>' +
@@ -2206,7 +3114,7 @@ async function renderAdmin(main){
       '<div class="card" style="overflow-x:auto;">' +
         '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
           '<thead><tr style="text-align:left;color:var(--on-surface-variant);font-size:11px;text-transform:uppercase;">' +
-            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th><th style="padding:10px 14px;"></th>' +
+            '<th style="padding:10px 14px;">Name</th><th style="padding:10px 14px;">Email</th><th style="padding:10px 14px;">Verified</th><th style="padding:10px 14px;">Joined</th><th style="padding:10px 14px;">Plan</th><th style="padding:10px 14px;">Emailable</th><th style="padding:10px 14px;"></th>' +
           '</tr></thead><tbody id="admin-users-tbody">' +
           users.map(function(u){
             return '<tr style="border-top:1px solid var(--outline-variant);" id="admin-user-row-' + u.id + '">' +
@@ -2215,6 +3123,11 @@ async function renderAdmin(main){
               '<td style="padding:10px 14px;">' + (u.emailVerified ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);">check_circle</span>' : '<span class="muted">—</span>') + '</td>' +
               '<td style="padding:10px 14px;" class="mono muted">' + timeAgo(u.createdAt * 1000) + '</td>' +
               '<td style="padding:10px 14px;">' + adminPlanCellHtml(u) + '</td>' +
+              // Reflects each user's own signup-time (or later Settings)
+              // choice — opted out means don't send them marketing/update
+              // email, transactional mail (verification, receipts) is
+              // unaffected by this flag.
+              '<td style="padding:10px 14px;">' + (u.emailNotifications ? '<span class="material-symbols-outlined" style="font-size:16px;color:var(--primary);" title="Opted in">mark_email_read</span>' : '<span class="material-symbols-outlined muted" style="font-size:16px;" title="Opted out">unsubscribe</span>') + '</td>' +
               '<td style="padding:10px 14px;"><button class="btn btn-ghost btn-sm" style="color:var(--error);" onclick="adminConfirmDeleteUser(\'' + u.id + '\',\'' + escapeHtml(u.email).replace(/'/g, "\\'") + '\')">Delete</button></td>' +
             '</tr>';
           }).join("") +
@@ -2377,9 +3290,10 @@ function renderPlanTab(el){
     '</div>' +
     '<div class="card" style="padding:24px;max-width:520px;">' +
       '<h3 style="font-size:16px;margin-bottom:6px;">Referrals</h3>' +
-      '<p class="muted" style="font-size:13px;margin-bottom:14px;">Invite founders. When 3 of them publish a real project you get +50 bonus coach messages; at 5, another +100. Only real, published projects count — not signups.</p>' +
+      '<p class="muted" style="font-size:13px;margin-bottom:14px;">Invite founders. When 3 of them publish a real project you get +50 bonus coach messages and a one-time 5% off Pro; at 5, another +100. Only real, published projects count — not signups.</p>' +
       '<div class="field"><label>Your referral link</label><div style="display:flex;gap:8px;"><input type="text" id="ref-link" value="' + escapeHtml(refLink) + '" readonly style="flex:1;" /><button class="btn btn-ghost btn-sm" onclick="copyReferralLink()">Copy</button></div></div>' +
       '<p class="muted" style="font-size:12px;margin-top:10px;">Bonus messages remaining: <strong>' + (u.referralBonusRemaining || 0) + '</strong></p>' +
+      (u.referralDiscountPct ? '<p class="muted" style="font-size:12px;margin-top:4px;">Referral discount earned: <strong>' + u.referralDiscountPct + '% off Pro</strong> (one-time, locked in).</p>' : "") +
     '</div>';
 }
 function copyReferralLink(){
@@ -2389,9 +3303,32 @@ function copyReferralLink(){
   showToast("Referral link copied.");
 }
 function openUpgradeModal(){
+  // Founding-member (50%, first USER_THRESHOLD signups) and referral (one-
+  // time 5%, first referral milestone) discounts stack additively — both
+  // are just real, server-tracked fields on the user (isFoundingMember,
+  // referralDiscountPct), never recomputed client-side.
+  var u = (STATE.auth && STATE.auth.user) || {};
+  var isFounding = !!u.isFoundingMember;
+  var refPct = u.referralDiscountPct || 0;
+  var totalPct = (isFounding ? 50 : 0) + refPct;
+  var discountedPrice = (15 * (1 - totalPct / 100)).toFixed(2).replace(/\.00$/, "");
+  var discountLabel = [isFounding ? "founding member 50%" : null, refPct ? (refPct + "% referral") : null].filter(Boolean).join(" + ");
+  var priceHtml = totalPct
+    ? '<span style="text-decoration:line-through;opacity:.5;">$15</span> <strong style="color:var(--primary);">$' + discountedPrice + '/mo</strong> — ' + discountLabel + ' discount, locked in'
+    : '$15/mo';
   openModal(
-    '<h3>SourceVenture Pro — $15/mo</h3>' +
+    '<h3>SourceVenture Pro — ' + priceHtml + '</h3>' +
     '<p class="modal-sub">300 coach messages/24h instead of 10, and an AI-generated business plan for this project.</p>' +
+    '<p class="muted" style="font-size:12.5px;margin:10px 0 0;">Plus a 15-minute 1:1 coach review call — <em>coming soon</em>.</p>' +
+    // 2026-09-05: merged with colombofilippo's real Stripe Checkout (was a
+    // "not connected yet" placeholder here). Checkout charges STRIPE_PRICE_ID
+    // as-is — there's no per-user discount applied to the Stripe session
+    // itself yet (that needs a real Stripe Coupon wired into
+    // create_checkout_session, not done tonight), so this deliberately
+    // does NOT claim the discount is automatic. Honest placeholder instead
+    // of a false promise; real reconciliation stays a quick manual step
+    // (email/admin plan-toggle) until that's built.
+    (totalPct ? '<p class="muted" style="font-size:12.5px;margin:8px 0 0;">Your ' + discountLabel + ' discount is noted on your account — email us after checkout and we\'ll confirm the adjusted rate.</p>' : "") +
     '<div class="modal-actions"><button class="btn btn-primary btn-block" onclick="startCheckout()">Continue to payment</button><button class="btn btn-ghost btn-block" onclick="closeModal()">Not now</button></div>'
   );
 }
@@ -2443,7 +3380,23 @@ function renderAccountTab(el){
     '<p class="muted" style="font-size:11px;margin-bottom:12px;">Email is set at signup and can\'t be changed here yet.</p>' +
     '<p class="auth-error" id="account-error"></p>' +
     '<button class="btn btn-primary btn-sm" onclick="saveAccountName()">Save name</button>' +
+  '</div>' +
+  '<div class="card" style="padding:24px;max-width:480px;margin-top:16px;">' +
+    '<h3 style="font-size:15px;margin-bottom:12px;">Notifications</h3>' +
+    '<label class="auth-checkbox-row" style="margin-top:0;"><input type="checkbox" id="settings-email-notifs" ' + (u.emailNotifications !== false ? "checked" : "") + ' onchange="saveEmailNotifPref(this.checked)" /> Email me updates about my account</label>' +
   '</div>';
+}
+async function saveEmailNotifPref(checked){
+  try{
+    var res = await fetch(API_BASE + "/api/auth/profile", { method:"PUT", credentials:"include", headers: Object.assign({"Content-Type":"application/json"}, csrfHeaders()), body: JSON.stringify({ emailNotifications: checked }) });
+    var data = await res.json();
+    if(!res.ok) throw new Error(data.detail || "Couldn't save");
+    setAuth(data.user);
+    showToast(checked ? "You'll get email updates." : "Email updates turned off.");
+  }catch(e){
+    showToast(e.message, true);
+    var cb = $("settings-email-notifs"); if(cb) cb.checked = !checked;
+  }
 }
 async function saveAccountName(){
   var name = $("account-name").value.trim();
@@ -2522,6 +3475,15 @@ function toggleHelpWidget(){
   var panel = $("help-panel");
   HELP_CHAT.open = !HELP_CHAT.open;
   panel.classList.toggle("open", HELP_CHAT.open);
+  // 2026-09-05 (Denis: "support message ui in mobile is a bit weird and
+  // small") — was a small box anchored to the fab's corner, floating
+  // directly over page content with nothing behind it to separate it as
+  // its own layer. On mobile this now becomes a real near-full-screen
+  // sheet with a proper dimmed backdrop (same pattern as the nav
+  // drawer's #sidenav-overlay) — desktop keeps the small corner popup.
+  var backdrop = $("help-backdrop");
+  if(backdrop) backdrop.classList.toggle("show", HELP_CHAT.open);
+  if(window.innerWidth <= 640) document.body.style.overflow = HELP_CHAT.open ? "hidden" : "";
   if(HELP_CHAT.open){
     if(!HELP_CHAT.messages.length){
       loadHelpChat();
