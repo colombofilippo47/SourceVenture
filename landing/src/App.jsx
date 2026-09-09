@@ -8,9 +8,10 @@ const EASE = [0.16, 1, 0.3, 1];
 
 function BrandMark() {
   return (
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-      <rect x="4" y="10" width="14" height="8" rx="3" fill="#000" transform="rotate(-35 11 14)" />
-      <rect x="10" y="10" width="14" height="8" rx="3" fill="#000" transform="rotate(-35 17 14)" />
+    <svg width="26" height="26" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <path d="M30 4 L8 4 L20 16 L8 16 L8 24 L30 24 L18 12 L30 12 Z" fill="currentColor" />
+      <path d="M18 44 L40 44 L28 32 L40 32 L40 24 L18 24 L30 36 L18 36 Z" fill="currentColor" />
+      <circle cx="24" cy="24" r="4.2" fill="currentColor" />
     </svg>
   );
 }

@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sourceventure-frontend",
+      "url": "http://localhost:5500",
+      "port": 5500
+    },
+    {
+      "name": "sourceventure-landing",
+      "url": "http://localhost:5600",
+      "port": 5600
+    }
+  ]
+}

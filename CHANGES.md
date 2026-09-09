@@ -1,5 +1,40 @@
 # CHANGES.md — SourceVenture
 
+## 2026-08-25 — Full-screen sign-in/sign-up + email verification wired up
+
+Denis: integrate a full-screen sign-in flow design; "do what you think is
+best" on how to fit it into this project's zero-build architecture; "keep
+light and dark mode and some subtle green."
+
+- **Full-screen `#/signin` / `#/signup`** replace the old modal-based auth
+  UI — dark, ambient canvas dot-reveal background (hand-rolled 2D canvas,
+  not three.js/WebGL — this project has no build step, so no npm/React
+  toolchain was introduced for one component), subtle green accent, both
+  theme modes preserved. All 5 old `openAuthModal(...)` call sites now
+  route here; other non-auth modals (investor apply, project preview,
+  clear-data confirm) are untouched.
+- **`#/verify/:token` route** — the backend has emailed a
+  `/#/verify/<token>` magic link since the verification columns existed,
+  but the frontend never had a route to handle it. Now it calls the real
+  verify endpoint and shows a success/error state.
+- **`POST /api/auth/resend-verification`** (new, session-gated,
+  rate-limited 3/10min per user) — powers a "check your email" step
+  shown right after signup, with a working resend button.
+- `emailVerified` now included in `/api/auth/login` and `/api/auth/me`
+  responses (previously only present on the signup response) — additive,
+  non-breaking.
+- Tested end-to-end against a live local backend via curl: signup →
+  resend (confirms old token invalidated) → verify with fresh token →
+  `emailVerified` flips true → already-verified resend no-ops → login
+  payload shape. Browser visual QA **not performed** — Chrome extension
+  unavailable in this environment; worth a look before merge, especially
+  the canvas background at mobile widths.
+- Built on a fresh `frontend/sign-in-flow-redesign` branch off
+  `origin/main` in an isolated git worktree, to avoid touching the
+  uncommitted backend-hardening work sitting in the main checkout.
+  Pushed; PR not yet opened (the repo's push token isn't scoped for the
+  API) — open one from the link `git push` printed.
+
 ## Backend production-hardening pass + business rating + frontend motion/glass/theme
 
 **Backend** (`backend/main.py`):

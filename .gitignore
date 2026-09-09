@@ -8,3 +8,4 @@ backend/__pycache__/
 SourceVenture-main.zip
 landing/node_modules/
 landing/dist/
+*.log
